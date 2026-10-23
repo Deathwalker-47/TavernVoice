@@ -27,7 +27,25 @@ Call your character like a phone call. Press the phone button and they pick up. 
 3. Open a character, click the **📞 phone button** in the character card's button row, and tick **Enable voice calls for this character**. Pick a voice and click **Preview voice**.
 4. In that character's chat a 📞 appears left of the send button. Click it to call.
 
-> **Microphone access needs a secure page.** Open SillyTavern at `http://localhost:8000` or over HTTPS. Browsers block the mic on plain `http://192.168.x.x` addresses, so for phones on your LAN use HTTPS (for example a reverse proxy or Tailscale).
+> **Microphone access needs a secure page.** Open SillyTavern at `http://localhost:8000` or over HTTPS. Browsers block the mic on plain `http://<ip>:8000` addresses, and the settings panel shows a red warning when that's the case.
+
+### SillyTavern on a remote server (VPS, Hetzner, …)
+
+1. Install the extension on the server:
+   ```bash
+   cd SillyTavern/data/default-user/extensions
+   git clone <this-repo-url> TavernVoice     # or scp the folder here
+   ```
+   Then reload SillyTavern in the browser. To update later, run `git pull` in that folder, or use **Extensions → Manage extensions → Update**.
+2. Serve SillyTavern over HTTPS. The simplest option is [Caddy](https://caddyserver.com), which gets a Let's Encrypt certificate automatically. Point a domain at the server and use this Caddyfile:
+   ```
+   tavern.example.com {
+       reverse_proxy localhost:8000
+   }
+   ```
+   Tailscale (`tailscale serve`) or a Cloudflare Tunnel also work if you don't want to expose a domain.
+
+Audio never passes through your server. The browser talks to `api.x.ai` directly, so the server's location doesn't add voice latency.
 
 ## Using a call
 

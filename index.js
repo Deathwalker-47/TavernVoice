@@ -719,9 +719,15 @@ class CallSession {
     }
 }
 
+const INSECURE_PAGE_MESSAGE = 'Your browser blocks the microphone because this page is not HTTPS. Open SillyTavern through an https:// address (reverse proxy, Tailscale or Cloudflare Tunnel) or via localhost.';
+
 async function startCall() {
     const c = ctx();
     if (call) return;
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+        toastr.error(INSECURE_PAGE_MESSAGE, 'TavernVoice', { timeOut: 12000 });
+        return;
+    }
     if (c.groupId) {
         toastr.info('Voice calls work in one-on-one chats only.', 'TavernVoice');
         return;
@@ -1023,6 +1029,8 @@ function bindSettings() {
         saveSettings();
     });
     root.on('click', '.tv-open-char', () => openCharacterPopup(ctx().characterId));
+
+    if (!window.isSecureContext) $('#tv_insecure').text(INSECURE_PAGE_MESSAGE).removeClass('displayNone');
 
     loadMicDevices();
     refreshSettingsCharacter();
