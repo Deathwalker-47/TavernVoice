@@ -16,6 +16,7 @@ const DEFAULTS = Object.freeze({
     apiKey: '',
     apiBase: DEFAULT_API_BASE,
     defaultVoice: 'eve',
+    labText: 'Hi! This is how I sound on a call. [laugh] <whisper>Pretty nice, right?</whisper>',
     language: 'en',
     speed: 1,
     inputMode: 'open',        // open | ptt
@@ -931,25 +932,28 @@ async function refreshCharButton() {
         .attr('title', cfg?.enabled ? 'Voice calls: ON (click for voice settings)' : 'Voice calls: OFF (click to set up)');
 }
 
+/** Voice <option>s grouped by source: the team's custom voices, xAI's built-ins, then anything typed in. */
 function voiceOptionsHtml(selected, { withDefault = false } = {}) {
-    const s = settings();
-    const opts = withDefault ? [`<option value="">Default (${s.defaultVoice})</option>`] : [];
-    for (const v of voiceList) {
-        const desc = v.description ?? FALLBACK_VOICES.find(f => f.voice_id === v.voice_id)?.description;
-        opts.push(`<option value="${v.voice_id}" ${v.voice_id === selected ? 'selected' : ''}>${v.name}${desc ? ` — ${desc}` : ''}</option>`);
+    const esc = (t) => $('<span>').text(t).html();
+    const option = (v) => {
+        const desc = v.description || FALLBACK_VOICES.find(f => f.voice_id === v.voice_id)?.description;
+        return `<option value="${esc(v.voice_id)}" ${v.voice_id === selected ? 'selected' : ''}>${esc(v.name)}${desc ? ` — ${esc(desc)}` : ''}</option>`;
+    };
+    const opts = withDefault ? [`<option value="">Default (${esc(settings().defaultVoice)})</option>`] : [];
+    const custom = voiceList.filter(v => v.custom);
+    if (custom.length) opts.push(`<optgroup label="Your custom voices">${custom.map(option).join('')}</optgroup>`);
+    opts.push(`<optgroup label="xAI voices">${voiceList.filter(v => !v.custom).map(option).join('')}</optgroup>`);
+    if (selected && selected !== CUSTOM_VOICE && !voiceList.some(v => v.voice_id === selected)) {
+        opts.push(`<optgroup label="Other"><option value="${esc(selected)}" selected>${esc(selected)} (voice ID)</option></optgroup>`);
     }
-    if (selected && !voiceList.some(v => v.voice_id === selected)) {
-        const id = $('<span>').text(selected).html();
-        opts.push(`<option value="${id}" selected>${id} (custom ID)</option>`);
-    }
-    opts.push(`<option value="${CUSTOM_VOICE}">Enter a custom voice ID…</option>`);
+    opts.push(`<option value="${CUSTOM_VOICE}">Enter a voice ID…</option>`);
     return opts.join('');
 }
 
-/** Ask for a voice ID (e.g. one made in the xAI console). Resolves to the ID, or '' if cancelled. */
+/** Ask for a voice ID that isn't in the list. Resolves to the ID, or '' if cancelled. */
 async function askCustomVoice(current) {
     const c = ctx();
-    const id = await c.callGenericPopup('Custom xAI voice ID (from console.x.ai → Voice → Custom voices). It must belong to the same xAI team as your API key.',
+    const id = await c.callGenericPopup('xAI voice ID. Custom voices only work with a key from the xAI team that made them (xAI offers voice cloning in the US only).',
         c.POPUP_TYPE.INPUT, current && current !== CUSTOM_VOICE ? current : '');
     const clean = String(id || '').trim();
     if (clean && !/^[\w-]{1,64}$/.test(clean)) {
@@ -1014,14 +1018,28 @@ async function openCharacterPopup(chid) {
 // Settings panel
 // ---------------------------------------------------------------------------
 
+/** Voice the lab plays; independent of the default so trying voices changes nothing. */
+let labVoice = '';
+
+function renderVoicePickers() {
+    const s = settings();
+    labVoice ||= s.defaultVoice;
+    $('#tv_default_voice').html(voiceOptionsHtml(s.defaultVoice));
+    $('#tv_lab_voice').html(voiceOptionsHtml(labVoice));
+    const v = voiceList.find(x => x.voice_id === labVoice);
+    const kind = v ? (v.custom ? 'Your custom voice' : 'xAI voice') : 'Voice ID not in the list';
+    $('#tv_lab_info').text([kind, `id ${labVoice}`, v?.gender, v?.language].filter(Boolean).join(' · '));
+}
+
 async function loadVoices({ quiet = false } = {}) {
     const status = $('#tv_status');
     try {
         status.text('Checking key…').removeClass('tv-ok tv-bad');
         const list = await client.voices();
-        if (list.length) voiceList = list.map(v => ({ ...v, description: FALLBACK_VOICES.find(f => f.voice_id === v.voice_id)?.description }));
-        status.text(`Connected · ${voiceList.length} voices`).addClass('tv-ok');
-        $('#tv_default_voice').html(voiceOptionsHtml(settings().defaultVoice));
+        if (list.length) voiceList = list;
+        const custom = voiceList.filter(v => v.custom).length;
+        status.text(`Connected · ${voiceList.length} voices${custom ? ` (${custom} custom)` : ''}`).addClass('tv-ok');
+        renderVoicePickers();
         if (!quiet) toastr.success(`xAI key works. ${voiceList.length} voices available.`, 'TavernVoice');
     } catch (err) {
         status.text(err?.status === 401 ? 'No key / invalid key' : 'Not connected').addClass('tv-bad');
@@ -1097,7 +1115,7 @@ function bindSettings() {
         if (el.type === 'checkbox') el.checked = !!s[key];
         else el.value = s[key];
     });
-    $('#tv_default_voice').html(voiceOptionsHtml(s.defaultVoice));
+    renderVoicePickers();
     $('#tv_language').html(languageOptionsHtml(s.language));
     const showRanges = () => root.find('[data-tv-out]').each((_, el) => { el.textContent = s[el.dataset.tvOut]; });
     showRanges();
@@ -1158,12 +1176,30 @@ function bindSettings() {
         const input = $('#tv_api_key');
         input.attr('type', input.attr('type') === 'password' ? 'text' : 'password');
     });
-    $('#tv_preview_default').on('click', () => {
+    // Voice lab: play any voice with your own line; the play button doubles as stop.
+    const labPlay = $('#tv_lab_play');
+    const labPlaying = (on) => labPlay.toggleClass('fa-play', !on).toggleClass('fa-stop', on).attr('title', on ? 'Stop' : 'Play this voice');
+    oneShot.addEventListener('idle', () => labPlaying(false));
+    oneShot.addEventListener('stopped', () => labPlaying(false));
+    labPlay.on('click', () => {
+        if (oneShot.busy) return oneShot.stop();
         getAudioContext();
-        oneShot.stop();
         oneShot.setVolume(s.volume);
-        const text = 'Hi! This is how I sound on a call. [laugh] <whisper>Pretty nice, right?</whisper>';
-        oneShot.enqueue((signal) => client.tts({ text, voice: s.defaultVoice, language: s.language, speed: s.speed, signal }), { text });
+        const text = String(s.labText || '').trim() || DEFAULTS.labText;
+        oneShot.enqueue((signal) => client.tts({ text, voice: labVoice, language: s.language, speed: s.speed, signal }), { text });
+        labPlaying(true);
+    });
+    $('#tv_lab_voice').on('change', async (e) => {
+        labVoice = e.target.value === CUSTOM_VOICE ? (await askCustomVoice(labVoice)) || labVoice : e.target.value;
+        renderVoicePickers();
+    });
+    $('#tv_lab_refresh').on('click', () => loadVoices());
+    $('#tv_lab_default').on('click', () => {
+        s.defaultVoice = labVoice;
+        saveSettings();
+        renderVoicePickers();
+        const name = voiceList.find(v => v.voice_id === labVoice)?.name ?? labVoice;
+        toastr.success(`${name} is now the default voice.`, 'TavernVoice');
     });
     $('#tv_refresh_mics').on('click', async () => {
         try {

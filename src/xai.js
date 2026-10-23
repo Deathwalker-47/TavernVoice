@@ -123,17 +123,25 @@ export class XaiClient {
         return await res.json();
     }
 
-    /** Built-in + custom voices. */
+    /** Built-in voices plus the team's custom voices (flagged `custom`). */
     async voices() {
         const res = await this.request('/tts/voices', { method: 'GET', retries: 0 });
         const data = await res.json();
-        const list = (data?.voices ?? []).map(v => ({ voice_id: v.voice_id, name: v.name || v.voice_id }));
+        const list = (data?.voices ?? []).map(v => ({ voice_id: v.voice_id, name: v.name || v.voice_id, gender: v.gender, language: v.language }));
         try {
             const custom = await (await this.request('/custom-voices?limit=200', { method: 'GET', retries: 0 })).json();
             for (const v of custom?.voices ?? []) {
-                if (!list.some(x => x.voice_id === v.voice_id)) list.push({ voice_id: v.voice_id, name: `${v.name || v.voice_id} (custom)`, custom: true });
+                if (list.some(x => x.voice_id === v.voice_id)) continue;
+                list.push({
+                    voice_id: v.voice_id,
+                    name: v.name || v.voice_id,
+                    description: [v.description, v.gender, v.accent, v.tone].filter(Boolean).join(', '),
+                    gender: v.gender,
+                    language: v.language,
+                    custom: true,
+                });
             }
-        } catch { /* custom voices are optional */ }
+        } catch { /* custom voices are optional (and US-only at xAI) */ }
         return list;
     }
 

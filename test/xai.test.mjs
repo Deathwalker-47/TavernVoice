@@ -45,6 +45,29 @@ test('client: builds TTS request and surfaces API errors', async () => {
     await assert.rejects(client.voices(), (err) => err instanceof XaiError && err.status === 401 && /Incorrect API key/.test(err.message));
 });
 
+test('client: voices lists built-ins, then the team\'s custom voices', async () => {
+    const reply = (body, status = 200) => new Response(JSON.stringify(body), { status });
+    let customStatus = 200;
+    globalThis.fetch = async (url) => (url.endsWith('/tts/voices')
+        ? reply({ voices: [{ voice_id: 'ara', name: 'Ara', gender: 'female', language: 'multilingual' }] })
+        : reply(customStatus === 200
+            ? { voices: [{ voice_id: 'ab12cd34', name: 'Mira', description: 'Late-night radio', gender: 'female', tone: 'calm' }] }
+            : { error: 'Custom voices are not enabled for this team.' }, customStatus));
+    const client = new XaiClient(async () => ({ key: 'k' }));
+    assert.deepEqual(await client.voices(), [
+        { voice_id: 'ara', name: 'Ara', gender: 'female', language: 'multilingual' },
+        { voice_id: 'ab12cd34', name: 'Mira', description: 'Late-night radio, female, calm', gender: 'female', language: undefined, custom: true },
+    ]);
+    customStatus = 403; // outside the US: the built-ins still load
+    assert.deepEqual((await client.voices()).map(v => v.voice_id), ['ara']);
+});
+
+test('client: unknown voice explains team-scoped custom voices', async () => {
+    globalThis.fetch = async () => new Response(JSON.stringify({ error: "TTS synthesis failed: Voice 'zz' not found" }), { status: 404 });
+    const client = new XaiClient(async () => ({ key: 'k' }));
+    await assert.rejects(client.tts({ text: 'hi', voice: 'zz' }), (err) => err.status === 404 && /xAI team that created the voice/.test(err.message));
+});
+
 test('client: STT puts the file last in the multipart form', async () => {
     let form;
     globalThis.fetch = async (_url, init) => {

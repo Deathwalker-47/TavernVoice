@@ -15,12 +15,14 @@ Call your character like a phone call. Press the phone button and they pick up. 
 - **Text during the call**: use the call window's keyboard, or SillyTavern's normal chat box. Either way the reply is spoken
 - **Live captions** in the call window, a 🎙 badge on messages you said by voice, and speech tags shown as chips in chat
 - **▶ Play with Grok voice** button on every message, usable outside calls too
+- **Voice lab**: every voice your xAI key can use in one dropdown (built-in voices plus your team's custom voices), with your own test line and a play button, so you can audition voices without touching your settings
+- **Voice director (optional)**: the [Flux LoRA Bridge](https://github.com/Deathwalker-47/Silly-Tavern-Flux-Bridge)'s helper LLM adds the speech tags, so your main LLM can write plain dialogue
 - Slash commands: `/voicecall`, `/hangup`, `/voicesay <text>`
 - Works on phones: the call window becomes a bottom sheet
 
 ## Install
 
-1. In SillyTavern open **Extensions** (the stacked-blocks icon) → **Install extension**, and paste this repository's Git URL.
+1. In SillyTavern open **Extensions** (the stacked-blocks icon) → **Install extension**, and paste `https://github.com/Deathwalker-47/TavernVoice`.
    Or copy this folder to `SillyTavern/data/<your-user>/extensions/TavernVoice` (or `public/scripts/extensions/third-party/TavernVoice`) and reload.
 2. Open **Extensions → TavernVoice: Grok Voice Calls** and paste your xAI API key ([console.x.ai](https://console.x.ai)). Click **Test key & load voices**.
    If your xAI key is already saved under API Connections and `allowKeysExposure: true` is set in `config.yaml`, **Use SillyTavern's xAI key** imports it.
@@ -34,7 +36,7 @@ Call your character like a phone call. Press the phone button and they pick up. 
 1. Install the extension on the server:
    ```bash
    cd SillyTavern/data/default-user/extensions
-   git clone <this-repo-url> TavernVoice     # or scp the folder here
+   git clone https://github.com/Deathwalker-47/TavernVoice TavernVoice
    ```
    Then reload SillyTavern in the browser. To update later, run `git pull` in that folder, or use **Extensions → Manage extensions → Update**.
 2. Serve SillyTavern over HTTPS. The simplest option is [Caddy](https://caddyserver.com), which gets a Let's Encrypt certificate automatically. Point a domain at the server and use this Caddyfile:
@@ -68,7 +70,9 @@ Tips:
 
 | Setting | Default | Notes |
 |---|---|---|
-| Default voice / language / speed | `eve`, `en`, `1.0×` | The character card can override each one |
+| Default voice / language / speed | `eve`, `en`, `1.0×` | The character card can override each one. Every voice list ends with *Enter a voice ID…* for IDs that aren't listed |
+| Voice lab | — | Pick any voice, edit the test line, press ▶ (press again to stop). *Make this the default voice* copies it to Default voice. ⟳ reloads the list, e.g. after xAI adds custom voices to your team. Voice cloning is US-only at xAI |
+| Voice director | Off | Needs the Flux LoRA Bridge with a helper LLM key. Bridge URL empty = Media Studio's bridge. The first sentence waits at most *Max wait* for tags, later ones are tagged while earlier ones play |
 | Expressiveness | Full | *Subtle* keeps only laugh/sigh/pause/whisper. *None* means plain speech |
 | What gets read aloud | Speech only | Skips `*actions*`. *Quoted dialogue only* suits narrated cards. *Everything* reads narration too |
 | Turn \*actions\* into sounds | On | `*giggles*` → `[giggle]`, `*sighs*` → `[sigh]`, … |

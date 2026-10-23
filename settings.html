@@ -36,7 +36,17 @@
             <label>Volume: <span data-tv-out="volume"></span>
                 <input type="range" data-tv="volume" min="0" max="1.5" step="0.05">
             </label>
-            <div id="tv_preview_default" class="menu_button menu_button_icon"><i class="fa-solid fa-play"></i><span>Preview default voice</span></div>
+
+            <h4>Voice lab</h4>
+            <small class="tv-hint">Try any voice without changing your settings. The list is every voice your xAI key can use; custom voices from your xAI team appear under "Your custom voices" (xAI offers voice cloning in the US only).</small>
+            <div class="flex-container flexnowrap">
+                <select id="tv_lab_voice" class="text_pole flex1"></select>
+                <div id="tv_lab_play" class="menu_button fa-solid fa-play" title="Play this voice"></div>
+                <div id="tv_lab_refresh" class="menu_button fa-solid fa-rotate" title="Reload the voice list"></div>
+            </div>
+            <small id="tv_lab_info" class="tv-hint"></small>
+            <textarea id="tv_lab_text" data-tv="labText" class="text_pole textarea_compact" rows="2" placeholder="What the voice says. Tags like [laugh] or &lt;whisper&gt;…&lt;/whisper&gt; work."></textarea>
+            <div id="tv_lab_default" class="menu_button menu_button_icon"><i class="fa-solid fa-star"></i><span>Make this the default voice</span></div>
 
             <hr>
             <h4>How the character speaks</h4>
