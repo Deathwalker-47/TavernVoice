@@ -90,6 +90,8 @@ async function getConfig() {
 
 const client = new XaiClient(getConfig);
 let voiceList = [...FALLBACK_VOICES];
+/** Sentinel <option> value that opens the custom voice ID prompt. */
+const CUSTOM_VOICE = '__custom__';
 
 // ---------------------------------------------------------------------------
 // Voice director: speech tags from the Flux bridge's helper LLM
@@ -936,8 +938,25 @@ function voiceOptionsHtml(selected, { withDefault = false } = {}) {
         const desc = v.description ?? FALLBACK_VOICES.find(f => f.voice_id === v.voice_id)?.description;
         opts.push(`<option value="${v.voice_id}" ${v.voice_id === selected ? 'selected' : ''}>${v.name}${desc ? ` — ${desc}` : ''}</option>`);
     }
-    if (selected && !voiceList.some(v => v.voice_id === selected)) opts.push(`<option value="${selected}" selected>${selected}</option>`);
+    if (selected && !voiceList.some(v => v.voice_id === selected)) {
+        const id = $('<span>').text(selected).html();
+        opts.push(`<option value="${id}" selected>${id} (custom ID)</option>`);
+    }
+    opts.push(`<option value="${CUSTOM_VOICE}">Enter a custom voice ID…</option>`);
     return opts.join('');
+}
+
+/** Ask for a voice ID (e.g. one made in the xAI console). Resolves to the ID, or '' if cancelled. */
+async function askCustomVoice(current) {
+    const c = ctx();
+    const id = await c.callGenericPopup('Custom xAI voice ID (from console.x.ai → Voice → Custom voices). It must belong to the same xAI team as your API key.',
+        c.POPUP_TYPE.INPUT, current && current !== CUSTOM_VOICE ? current : '');
+    const clean = String(id || '').trim();
+    if (clean && !/^[\w-]{1,64}$/.test(clean)) {
+        toastr.warning('Voice IDs are letters, digits, - and _ only.', 'TavernVoice');
+        return '';
+    }
+    return clean;
 }
 
 function languageOptionsHtml(selected, { withDefault = false } = {}) {
@@ -972,7 +991,14 @@ async function openCharacterPopup(chid) {
     $el.find('[name=enabled]').prop('checked', !!cfg.enabled);
     $el.find('[name=notes]').val(cfg.notes);
     $el.on('change', 'input, select, textarea', async (e) => {
-        const { name, type, checked, value } = e.target;
+        const { name, type, checked } = e.target;
+        let { value } = e.target;
+        if (name === 'voice' && value === CUSTOM_VOICE) {
+            value = await askCustomVoice(cfg.voice);
+            if (!value) value = cfg.voice;
+            cfg.voice = value;
+            $(e.target).html(voiceOptionsHtml(value, { withDefault: true }));
+        }
         await setCharVoice(chid, { [name]: type === 'checkbox' ? checked : value });
         if (name === 'enabled') toastr.success(checked ? `Voice calls enabled for ${ch.name}` : `Voice calls disabled for ${ch.name}`, 'TavernVoice');
     });
@@ -1080,6 +1106,16 @@ function bindSettings() {
         const el = e.target;
         const key = el.dataset.tv;
         let value = el.type === 'checkbox' ? el.checked : el.value;
+        if (value === CUSTOM_VOICE) {
+            if (e.type !== 'change') return;
+            askCustomVoice(s[key]).then((id) => {
+                if (id) s[key] = id;
+                $(el).html(voiceOptionsHtml(s[key]));
+                saveSettings();
+                if (call && LIVE_KEYS.has(key)) call.applySettings();
+            });
+            return;
+        }
         if (el.type === 'range' || el.type === 'number') value = Number(value);
         if (s[key] === value) return;
         s[key] = value;

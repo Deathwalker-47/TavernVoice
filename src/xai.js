@@ -89,8 +89,16 @@ export class XaiClient {
         };
         const s = Number(speed);
         if (s && s !== 1) json.speed = Math.max(0.7, Math.min(1.5, s));
-        const res = await this.request('/tts', { json, signal });
-        return await res.arrayBuffer();
+        try {
+            const res = await this.request('/tts', { json, signal });
+            return await res.arrayBuffer();
+        } catch (err) {
+            // Custom voices are scoped to the xAI team that created them.
+            if (err?.status === 404 && /voice/i.test(err.message)) {
+                throw new XaiError(`${err.message}. Custom voice IDs only work with an API key from the xAI team that created the voice.`, 404, err.detail);
+            }
+            throw err;
+        }
     }
 
     /**
