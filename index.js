@@ -5,7 +5,7 @@ import { EXTENSION_KEY, PROMPT_KEY, DEFAULT_API_BASE, FALLBACK_VOICES, LANGUAGES
 import { XaiClient, SttStream } from './src/xai.js';
 import { getAudioContext, MicInput, SpeechPlayer, Sounds } from './src/audio.js';
 import { encodeWav } from './src/dsp.js';
-import { SpeechTurn, captionHtml, decorateTagsHtml, toSpeechText } from './src/text.js';
+import { SpeechTurn, captionHtml, decorateTagsHtml, isSpeakable, toSpeechText } from './src/text.js';
 import { DEFAULT_CALL_PROMPT, buildCallPrompt } from './src/prompt.js';
 import { CallUI } from './src/ui.js';
 
@@ -39,6 +39,12 @@ const DEFAULTS = Object.freeze({
     captions: true,
     prettifyTags: true,
     debug: false,
+    // Voice director: the Flux bridge's helper LLM adds the speech tags per sentence.
+    helperTags: false,
+    helperBridgeUrl: '',      // empty = Media Studio's bridge URL, else Image Generation's SD URL
+    helperBridgeToken: '',
+    helperModel: 'gemini-2.5-flash-lite',
+    helperFirstMs: 1500,      // longest wait for the first sentence's tags before speaking it plain
 });
 
 const CHAR_DEFAULTS = Object.freeze({ enabled: false, voice: '', language: '', speed: '', notes: '' });
@@ -84,6 +90,57 @@ async function getConfig() {
 
 const client = new XaiClient(getConfig);
 let voiceList = [...FALLBACK_VOICES];
+
+// ---------------------------------------------------------------------------
+// Voice director: speech tags from the Flux bridge's helper LLM
+// ---------------------------------------------------------------------------
+
+/** Bridge URL: own setting, else Media Studio's, else Image Generation's SD WebUI URL. */
+function helperBase() {
+    const s = settings();
+    const all = ctx().extensionSettings;
+    const raw = s.helperBridgeUrl?.trim() || all?.flux_media?.bridgeUrl?.trim() || all?.sd?.auto_url?.trim() || 'http://localhost:7861';
+    return raw.replace(/\/sdapi\/v1\/txt2img\/?$/, '').replace(/\/+$/, '');
+}
+
+function helperHeaders() {
+    const token = settings().helperBridgeToken?.trim() || ctx().extensionSettings?.flux_media?.bridgeToken?.trim();
+    return { 'Content-Type': 'application/json', ...(token ? { 'X-Edit-Token': token } : {}) };
+}
+
+function lastUserLine() {
+    const chat = ctx().chat;
+    for (let i = chat.length - 1; i >= 0; i--) if (chat[i].is_user) return String(chat[i].mes || '').slice(-300);
+    return '';
+}
+
+/**
+ * Asks the bridge helper to add speech tags to one sentence. Never throws and never
+ * delays past timeoutMs: on any problem the sentence is spoken as it was.
+ */
+async function helperTag(text, { char = '', context = '', timeoutMs = 1500 } = {}) {
+    const s = settings();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const res = await fetch(`${helperBase()}/helper/voice-tags`, {
+            method: 'POST',
+            headers: helperHeaders(),
+            body: JSON.stringify({ text, char, tag_level: s.tagLevel, context, model: s.helperModel || undefined }),
+            signal: controller.signal,
+        });
+        if (!res.ok) return text;
+        const data = await res.json();
+        if (!data?.text || data.error) return text;
+        // Re-run our own cleanup so only official, allowed tags reach Grok.
+        const cleaned = toSpeechText(data.text, { mode: 'all', actionSounds: false, tagLevel: s.tagLevel });
+        return isSpeakable(cleaned) ? cleaned : text;
+    } catch {
+        return text; // timed out or unreachable
+    } finally {
+        clearTimeout(timer);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Per-character config, stored on the card at data.extensions.tavern_voice
@@ -382,7 +439,9 @@ class CallSession {
             ctx().setExtensionPrompt(PROMPT_KEY, '', 1, 0);
             return;
         }
-        const text = buildCallPrompt({ template: s.promptTemplate, tagLevel: s.tagLevel, voiceNotes: this.voice.notes, greeting });
+        // With the voice director on, the main LLM writes plain dialogue and the helper adds tags.
+        const promptTags = s.helperTags ? 'none' : s.tagLevel;
+        const text = buildCallPrompt({ template: s.promptTemplate, tagLevel: promptTags, voiceNotes: this.voice.notes, greeting });
         // position 1 = IN_CHAT, role 0 = SYSTEM
         ctx().setExtensionPrompt(PROMPT_KEY, text, 1, Number(s.promptDepth) || 0, false, 0);
     }
@@ -398,6 +457,7 @@ class CallSession {
         this.generating = true;
         this.player.stop(); // a new reply supersedes whatever was still being said
         this.turn = new SpeechTurn(this.speechOpts());
+        this.turnChunks = 0;
         const last = ctx().chat.at(-1);
         this.turnBase = type === 'continue' && last && !last.is_user ? (last.mes ?? '') : '';
         this.stoppedAt = 0;
@@ -422,6 +482,7 @@ class CallSession {
         if (!this.turn) {
             if (Date.now() - this.stoppedAt < 3000) return; // interrupted: don't speak the leftovers
             this.turn = new SpeechTurn(this.speechOpts());
+            this.turnChunks = 0;
         }
         let text = msg.mes ?? '';
         if (this.turnBase && text.startsWith(this.turnBase)) text = text.slice(this.turnBase.length);
@@ -458,7 +519,17 @@ class CallSession {
         const { voice, language, speed } = this.voice;
         for (const text of chunks) {
             log('speak:', text);
-            this.player.enqueue((signal) => client.tts({ text, voice, language, speed, signal }), { text });
+            const meta = { text };
+            // Only the first sentence's tags are on the critical path; later ones are
+            // tagged while earlier sentences play (the player prefetches ahead).
+            const budget = (this.turnChunks++ || 0) === 0 ? Number(this.s.helperFirstMs) || 1500 : 8000;
+            this.player.enqueue(async (signal) => {
+                const spoken = this.s.helperTags
+                    ? await helperTag(text, { char: this.name, context: lastUserLine(), timeoutMs: budget })
+                    : text;
+                meta.text = spoken; // the caption shows what the voice actually gets
+                return client.tts({ text: spoken, voice, language, speed, signal });
+            }, meta);
         }
     }
 
@@ -787,8 +858,12 @@ async function speakOnce(rawText, chid) {
         toastr.info('Nothing to say in that message.', 'TavernVoice');
         return;
     }
+    const name = ctx().characters[chid]?.name ?? '';
     for (const chunk of chunks) {
-        oneShot.enqueue((signal) => client.tts({ text: chunk, voice: cfg.voice, language: cfg.language, speed: cfg.speed, signal }), { text: chunk });
+        oneShot.enqueue(async (signal) => {
+            const text = s.helperTags ? await helperTag(chunk, { char: name, timeoutMs: 8000 }) : chunk;
+            return client.tts({ text, voice: cfg.voice, language: cfg.language, speed: cfg.speed, signal });
+        }, { text: chunk });
     }
 }
 
@@ -960,6 +1035,33 @@ async function refreshSettingsCharacter() {
 
 const LIVE_KEYS = new Set(['volume', 'sensitivity', 'endSilenceMs']);
 
+let helperModels = [];
+
+async function loadHelperModels(refresh = false) {
+    try {
+        const res = await fetch(`${helperBase()}/helper/models${refresh ? '?refresh=true' : ''}`, { headers: helperHeaders() });
+        if (!res.ok) throw new Error(res.statusText);
+        helperModels = (await res.json()).models || [];
+    } catch {
+        helperModels = [];
+    }
+    renderHelperModels();
+}
+
+function renderHelperModels() {
+    const s = settings();
+    const filter = String($('#tv_helper_filter').val() || '').toLowerCase();
+    const list = helperModels.filter(m => !filter || String(m.id).toLowerCase().includes(filter));
+    const price = (m) => (m.input_price != null ? ` · $${m.input_price}/$${m.output_price} per M` : '');
+    const options = list.slice(0, 400).map(m =>
+        `<option value="${$('<span>').text(m.id).html()}" ${m.id === s.helperModel ? 'selected' : ''}>${$('<span>').text(m.id).html()}${price(m)}</option>`);
+    if (s.helperModel && !list.some(m => m.id === s.helperModel)) {
+        options.unshift(`<option value="${$('<span>').text(s.helperModel).html()}" selected>${$('<span>').text(s.helperModel).html()}</option>`);
+    }
+    $('#tv_helper_model').html(options.join('') || '<option value="">Bridge default</option>');
+    $('#tv_helper_status').text(helperModels.length ? `${helperModels.length} models from ${helperBase()}` : `Bridge not reachable at ${helperBase()}`);
+}
+
 function bindSettings() {
     const s = settings();
     const root = $('#tavern_voice_settings');
@@ -985,8 +1087,22 @@ function bindSettings() {
         showRanges();
         saveSettings();
         if (call && LIVE_KEYS.has(key)) call.applySettings();
+        if (call && key === 'helperTags') call.applyPrompt(false);
         if (key === 'prettifyTags' && !call) ctx().reloadCurrentChat();
+        if (key === 'helperBridgeUrl' || key === 'helperBridgeToken') loadHelperModels();
     });
+
+    $('#tv_helper_refresh').on('click', () => loadHelperModels(true));
+    $('#tv_helper_filter').on('input', () => renderHelperModels());
+    $('#tv_helper_test').on('click', async () => {
+        const $out = $('#tv_helper_out').text('Asking the helper…');
+        const line = 'Wait, you actually drove all the way here just to see me?';
+        const started = performance.now();
+        const tagged = await helperTag(line, { char: 'Test', timeoutMs: 15000 });
+        const ms = Math.round(performance.now() - started);
+        $out.text(tagged === line ? `No tags added (${ms} ms). Check the bridge URL, or the model kept it plain.` : `${tagged}  (${ms} ms)`);
+    });
+    loadHelperModels();
 
     $('#tv_test_key').on('click', () => loadVoices());
     $('#tv_use_st_key').on('click', async () => {
