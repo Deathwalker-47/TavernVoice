@@ -1,0 +1,539 @@
+/* TavernVoice: uses SillyTavern theme variables so it follows the user's theme. */
+
+/* ---------- chat bar & card buttons ---------- */
+
+#tv_call_button {
+    font-size: var(--bottomFormIconSize, 1.2em);
+    color: var(--SmartThemeBodyColor);
+    opacity: 0.7;
+    transition: color 0.2s, opacity 0.2s, transform 0.2s;
+    cursor: pointer;
+}
+
+#tv_call_button:hover {
+    opacity: 1;
+    color: #3ec46d;
+}
+
+#tv_call_button.tv-in-call {
+    opacity: 1;
+    color: #e5484d;
+    transform: rotate(135deg);
+    animation: tv-pulse 1.6s ease-in-out infinite;
+}
+
+#tv_char_button.tv-enabled {
+    color: #3ec46d;
+    border-color: #3ec46d;
+}
+
+.tv_mes_play:hover {
+    color: #3ec46d;
+}
+
+.mes[is_user="true"] .tv_mes_play {
+    display: none;
+}
+
+.tv-voice-badge {
+    margin-left: 6px;
+    font-size: 0.75em;
+    opacity: 0.55;
+}
+
+/* In chat messages SillyTavern prefixes classes with "custom-". */
+.tv-tag,
+.mes_text .custom-tv-tag {
+    display: inline-block;
+    padding: 0 6px;
+    margin: 0 2px;
+    border-radius: 999px;
+    font-size: 0.78em;
+    line-height: 1.5;
+    font-style: italic;
+    vertical-align: 1px;
+    color: var(--SmartThemeEmColor, inherit);
+    background: color-mix(in srgb, var(--SmartThemeEmColor, #888) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--SmartThemeEmColor, #888) 35%, transparent);
+}
+
+.tv-tag::before,
+.mes_text .custom-tv-tag::before {
+    content: "♪ ";
+    font-style: normal;
+    opacity: 0.7;
+}
+
+/* <whisper>…</whisper> and other delivery styles: dotted underline plus a tiny label. */
+.mes_text .custom-tv-wrap {
+    font-style: italic;
+    text-decoration: underline dotted color-mix(in srgb, var(--SmartThemeEmColor, #888) 60%, transparent);
+    text-underline-offset: 3px;
+}
+
+.mes_text .custom-tv-wrap::before {
+    content: attr(title);
+    display: inline-block;
+    margin-right: 4px;
+    padding: 0 5px;
+    border-radius: 4px;
+    font-size: 0.7em;
+    font-style: normal;
+    vertical-align: 2px;
+    text-decoration: none;
+    opacity: 0.75;
+    background: color-mix(in srgb, var(--SmartThemeEmColor, #888) 15%, transparent);
+}
+
+/* ---------- call window ---------- */
+
+.tv-call {
+    --tv-mic: 0;
+    --tv-ai: 0;
+    --tv-accent: #3ec46d;
+    /* SillyTavern gives <html> a transform and zero height, which makes it the containing
+       block for fixed elements, so "bottom:" would resolve against a 0px box. Anchor from
+       the top in viewport units and lift the window by its own height instead. */
+    position: fixed;
+    right: 24px;
+    top: calc(100vh - 110px);
+    top: calc(100dvh - 110px);
+    translate: 0 -100%;
+    width: 300px;
+    max-width: calc(100vw - 32px);
+    z-index: 3000;
+    display: flex;
+    flex-direction: column;
+    color: var(--SmartThemeBodyColor);
+    background: var(--SmartThemeBlurTintColor, rgba(20, 20, 24, 0.92));
+    backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 10px) * 1.5));
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.15));
+    border-radius: 18px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+    user-select: none;
+    animation: tv-in 0.25s ease-out;
+}
+
+.tv-call.tv-ending {
+    animation: tv-out 0.4s ease-in 1s forwards;
+}
+
+.tv-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px 4px 14px;
+    cursor: grab;
+    font-size: 0.85em;
+    touch-action: none;
+}
+
+.tv-title {
+    flex: 1;
+    opacity: 0.6;
+}
+
+.tv-live {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-variant-numeric: tabular-nums;
+}
+
+.tv-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #f5a524;
+    animation: tv-blink 1.2s ease-in-out infinite;
+}
+
+.tv-connected .tv-dot {
+    background: var(--tv-accent);
+    animation: none;
+}
+
+.tv-icon {
+    background: none;
+    border: none;
+    color: inherit;
+    opacity: 0.6;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 6px;
+}
+
+.tv-icon:hover {
+    opacity: 1;
+    background: rgba(127, 127, 127, 0.15);
+}
+
+.tv-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 8px 16px 6px;
+    gap: 4px;
+}
+
+.tv-avatar-wrap {
+    position: relative;
+    width: 108px;
+    height: 108px;
+    margin: 6px 0 4px;
+}
+
+.tv-avatar {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2));
+    z-index: 2;
+}
+
+.tv-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    pointer-events: none;
+    transition: transform 0.08s linear, opacity 0.15s;
+}
+
+/* The character's voice drives the green halo, your mic drives the blue one. */
+.tv-ring-ai {
+    background: radial-gradient(circle, color-mix(in srgb, var(--tv-accent) 55%, transparent) 55%, transparent 72%);
+    transform: scale(calc(1 + var(--tv-ai) * 0.45));
+    opacity: calc(0.15 + var(--tv-ai) * 1.2);
+}
+
+.tv-ring-user {
+    border: 3px solid #4c9cff;
+    transform: scale(calc(1.04 + var(--tv-mic) * 0.25));
+    opacity: calc(var(--tv-mic) * 1.4);
+}
+
+.tv-call[data-phase="ringing"] .tv-ring-ai {
+    animation: tv-ringing 1.5s ease-out infinite;
+    opacity: 0.6;
+}
+
+.tv-call[data-phase="thinking"] .tv-avatar {
+    animation: tv-breathe 1.8s ease-in-out infinite;
+}
+
+.tv-muted .tv-ring-user {
+    opacity: 0;
+}
+
+.tv-name {
+    font-weight: 600;
+    font-size: 1.1em;
+    text-align: center;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tv-status {
+    font-size: 0.85em;
+    opacity: 0.7;
+    min-height: 1.3em;
+}
+
+.tv-call[data-phase="user"] .tv-status {
+    color: #4c9cff;
+    opacity: 1;
+}
+
+.tv-call[data-phase="speaking"] .tv-status {
+    color: var(--tv-accent);
+    opacity: 1;
+}
+
+.tv-captions {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 4px;
+    font-size: 0.88em;
+    user-select: text;
+}
+
+.tv-no-captions .tv-captions {
+    display: none;
+}
+
+.tv-cap {
+    max-height: 4.6em;
+    overflow-y: auto;
+    padding: 4px 8px;
+    border-radius: 8px;
+    line-height: 1.4;
+}
+
+.tv-cap:empty,
+.tv-cap.tv-empty {
+    display: none;
+}
+
+.tv-cap-ai {
+    background: color-mix(in srgb, var(--tv-accent) 10%, transparent);
+}
+
+.tv-cap-user {
+    text-align: right;
+    background: rgba(76, 156, 255, 0.12);
+}
+
+.tv-cap-user.tv-interim {
+    opacity: 0.65;
+    font-style: italic;
+}
+
+.tv-cap .tv-tag {
+    font-size: 0.8em;
+}
+
+.tv-wrap {
+    font-style: italic;
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+}
+
+.tv-controls {
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 12px 12px;
+}
+
+.tv-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.15));
+    background: rgba(127, 127, 127, 0.14);
+    color: inherit;
+    font-size: 1.05em;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+    touch-action: none;
+}
+
+.tv-btn:hover {
+    background: rgba(127, 127, 127, 0.28);
+}
+
+.tv-btn:active {
+    transform: scale(0.94);
+}
+
+.tv-btn.tv-on {
+    background: color-mix(in srgb, #4c9cff 35%, transparent);
+}
+
+.tv-btn.tv-off,
+.tv-muted .tv-mic {
+    background: rgba(229, 72, 77, 0.3);
+}
+
+.tv-end {
+    width: 52px;
+    background: #e5484d;
+    border-color: #e5484d;
+    color: #fff;
+    border-radius: 22px;
+}
+
+.tv-end:hover {
+    background: #d13438;
+}
+
+/* Push-to-talk: the mic button is the big "hold" target. */
+.tv-call[data-mode="ptt"] .tv-mic {
+    width: 56px;
+    height: 56px;
+    background: color-mix(in srgb, #4c9cff 25%, transparent);
+}
+
+.tv-ptt-active .tv-mic,
+.tv-call[data-mode="ptt"][data-phase="user"] .tv-mic {
+    background: #4c9cff;
+    color: #fff;
+    box-shadow: 0 0 0 calc(4px + var(--tv-mic) * 10px) rgba(76, 156, 255, 0.3);
+}
+
+.tv-type {
+    display: none;
+    gap: 6px;
+    padding: 0 12px 12px;
+}
+
+.tv-typing .tv-type {
+    display: flex;
+}
+
+.tv-type input {
+    flex: 1;
+    margin: 0;
+}
+
+/* Minimized: a slim pill with timer + hang up. */
+.tv-minimized {
+    width: 220px;
+}
+
+.tv-minimized .tv-body,
+.tv-minimized .tv-type,
+.tv-minimized .tv-mode,
+.tv-minimized .tv-keyboard,
+.tv-minimized .tv-speaker {
+    display: none;
+}
+
+.tv-minimized .tv-controls {
+    padding-top: 2px;
+}
+
+/* Phones: a bottom sheet instead of a floating window. */
+@media (max-width: 600px) {
+    .tv-call {
+        left: 8px !important;
+        right: 8px !important;
+        top: calc(100dvh - var(--bottomFormBlockSize, 50px) - 28px) !important;
+        translate: 0 -100% !important;
+        width: auto;
+        max-width: none;
+    }
+
+    .tv-head {
+        cursor: default;
+    }
+
+    .tv-avatar-wrap {
+        width: 84px;
+        height: 84px;
+    }
+}
+
+@keyframes tv-in {
+    from { opacity: 0; transform: translateY(16px) scale(0.97); }
+}
+
+@keyframes tv-out {
+    to { opacity: 0; transform: translateY(16px) scale(0.97); }
+}
+
+@keyframes tv-blink {
+    50% { opacity: 0.3; }
+}
+
+@keyframes tv-pulse {
+    50% { opacity: 0.55; }
+}
+
+@keyframes tv-ringing {
+    0% { transform: scale(1); opacity: 0.7; }
+    100% { transform: scale(1.5); opacity: 0; }
+}
+
+@keyframes tv-breathe {
+    50% { transform: scale(0.96); }
+}
+
+/* ---------- settings & popup ---------- */
+
+.tavern-voice-settings h4 {
+    margin: 8px 0 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.tavern-voice-settings label {
+    display: block;
+    margin-top: 6px;
+}
+
+.tavern-voice-settings label.checkbox_label {
+    display: flex;
+}
+
+.tavern-voice-settings input[type="range"] {
+    width: 100%;
+}
+
+.tv-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px;
+}
+
+.tv-hint {
+    display: block;
+    opacity: 0.7;
+    margin: 4px 0;
+}
+
+.tv-status-pill {
+    font-weight: normal;
+    font-size: 0.75em;
+    padding: 1px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--SmartThemeBorderColor);
+}
+
+.tv-ok {
+    color: #3ec46d;
+    border-color: #3ec46d;
+}
+
+.tv-bad {
+    color: #e5484d;
+    border-color: #e5484d;
+}
+
+.tv-current-char .menu_button {
+    margin-top: 6px;
+    width: fit-content;
+}
+
+.tv-char-popup {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    text-align: left;
+}
+
+.tv-char-popup h3 {
+    margin: 0 0 4px;
+}
+
+.tv-char-popup .tv-notes {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.tv-char-popup .tv-grid label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.tv-popup-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.tv-popup-actions small {
+    opacity: 0.6;
+}

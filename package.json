@@ -1,0 +1,11 @@
+{
+  "name": "sillytavern-tavernvoice",
+  "version": "0.1.0",
+  "description": "SillyTavern extension: real-time voice calls with your character using xAI Grok TTS + STT.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "mock": "node dev/mock-xai.mjs"
+  }
+}

@@ -1,0 +1,116 @@
+<div id="tavern_voice_settings" class="tavern-voice-settings">
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b><i class="fa-solid fa-phone"></i> TavernVoice: Grok Voice Calls</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        </div>
+        <div class="inline-drawer-content">
+
+            <h4>xAI connection <small id="tv_status" class="tv-status-pill">Not checked</small></h4>
+            <label for="tv_api_key">xAI API key</label>
+            <div class="flex-container flexnowrap">
+                <input id="tv_api_key" data-tv="apiKey" type="password" class="text_pole flex1" placeholder="xai-…" autocomplete="off">
+                <div id="tv_toggle_key" class="menu_button fa-solid fa-eye" title="Show/hide key"></div>
+            </div>
+            <div class="flex-container">
+                <div id="tv_test_key" class="menu_button menu_button_icon"><i class="fa-solid fa-plug-circle-check"></i><span>Test key &amp; load voices</span></div>
+                <div id="tv_use_st_key" class="menu_button menu_button_icon" title="Read the xAI key saved under API Connections (requires allowKeysExposure: true in config.yaml)"><i class="fa-solid fa-key"></i><span>Use SillyTavern's xAI key</span></div>
+            </div>
+            <small class="tv-hint">The key is stored in your SillyTavern settings and sent only to api.x.ai, straight from this browser.</small>
+
+            <hr>
+            <h4>Current character</h4>
+            <div id="tv_current_char" class="tv-current-char"></div>
+            <small class="tv-hint">Calls are switched on per character with the <i class="fa-solid fa-phone"></i> button in the character card. Then a <i class="fa-solid fa-phone"></i> appears next to the send button.</small>
+
+            <hr>
+            <h4>Voice</h4>
+            <div class="tv-grid">
+                <label>Default voice<select id="tv_default_voice" data-tv="defaultVoice" class="text_pole"></select></label>
+                <label>Language<select id="tv_language" data-tv="language" class="text_pole"></select></label>
+            </div>
+            <label>Speed: <span data-tv-out="speed"></span>×
+                <input type="range" data-tv="speed" min="0.7" max="1.5" step="0.05">
+            </label>
+            <label>Volume: <span data-tv-out="volume"></span>
+                <input type="range" data-tv="volume" min="0" max="1.5" step="0.05">
+            </label>
+            <div id="tv_preview_default" class="menu_button menu_button_icon"><i class="fa-solid fa-play"></i><span>Preview default voice</span></div>
+
+            <hr>
+            <h4>How the character speaks</h4>
+            <label>Expressiveness (Grok speech tags)
+                <select data-tv="tagLevel" class="text_pole">
+                    <option value="full">Full: laughs, sighs, whispers, singing, pitch…</option>
+                    <option value="subtle">Subtle: laugh, sigh, pause, whisper</option>
+                    <option value="none">None: plain speech</option>
+                </select>
+            </label>
+            <label>What gets read aloud
+                <select data-tv="speakMode" class="text_pole">
+                    <option value="auto">Speech only: skip *actions* and narration markup</option>
+                    <option value="quotes">Only "quoted" dialogue (for narrated replies)</option>
+                    <option value="all">Everything, narration included</option>
+                </select>
+            </label>
+            <label class="checkbox_label"><input type="checkbox" data-tv="actionSounds"> Turn *laughs*, *sighs*, *giggles* into real sounds</label>
+            <label class="checkbox_label"><input type="checkbox" data-tv="prettifyTags"> Show voice tags as chips in chat</label>
+
+            <hr>
+            <h4>Listening</h4>
+            <div class="tv-grid">
+                <label>Talk mode
+                    <select data-tv="inputMode" class="text_pole">
+                        <option value="open">Open mic (hands-free)</option>
+                        <option value="ptt">Push-to-talk</option>
+                    </select>
+                </label>
+                <label>Transcription
+                    <select data-tv="sttMode" class="text_pole">
+                        <option value="auto">Live (streaming), fall back to standard</option>
+                        <option value="stream">Live only</option>
+                        <option value="batch">Standard (send after you stop talking)</option>
+                    </select>
+                </label>
+            </div>
+            <label>Microphone</label>
+            <div class="flex-container flexnowrap">
+                <select id="tv_mic_device" data-tv="micDeviceId" class="text_pole flex1"></select>
+                <div id="tv_refresh_mics" class="menu_button fa-solid fa-rotate" title="Refresh microphone list"></div>
+            </div>
+            <label>Mic sensitivity: <span data-tv-out="sensitivity"></span>
+                <input type="range" data-tv="sensitivity" min="0" max="100" step="1">
+            </label>
+            <label>Pause before your turn ends: <span data-tv-out="endSilenceMs"></span> ms
+                <input type="range" data-tv="endSilenceMs" min="300" max="2500" step="50">
+            </label>
+            <label class="checkbox_label"><input type="checkbox" data-tv="smartTurn"> Smart turn detection (live mode: waits if you pause mid-thought)</label>
+            <label class="checkbox_label"><input type="checkbox" data-tv="bargeIn"> Let me interrupt the character by talking (use headphones if it interrupts itself)</label>
+            <label>Push-to-talk key (KeyboardEvent.code)
+                <input type="text" data-tv="pttKey" class="text_pole" placeholder="Backquote">
+            </label>
+
+            <hr>
+            <h4>Call behavior</h4>
+            <label class="checkbox_label"><input type="checkbox" data-tv="ring"> Ringing and hang-up sounds</label>
+            <label class="checkbox_label"><input type="checkbox" data-tv="greet"> Character answers the phone with a greeting</label>
+            <label class="checkbox_label"><input type="checkbox" data-tv="logCalls"> Note call start/end in the chat (the AI sees it)</label>
+            <label class="checkbox_label"><input type="checkbox" data-tv="captions"> Live captions in the call window</label>
+            <label class="checkbox_label"><input type="checkbox" data-tv="injectPrompt"> Tell the AI it's on a voice call (recommended)</label>
+            <label>Call prompt depth (0 = right after the last message)
+                <input type="number" data-tv="promptDepth" class="text_pole" min="0" max="20" step="1">
+            </label>
+            <label>Call prompt <small>({{voice_tags}} and {{voice_notes}} are filled in automatically)</small></label>
+            <textarea id="tv_prompt_template" data-tv="promptTemplate" class="text_pole textarea_compact" rows="8"></textarea>
+            <div id="tv_reset_prompt" class="menu_button menu_button_icon"><i class="fa-solid fa-rotate-left"></i><span>Reset prompt</span></div>
+
+            <hr>
+            <h4>Advanced</h4>
+            <label>API base URL
+                <input type="text" data-tv="apiBase" class="text_pole" placeholder="https://api.x.ai/v1">
+            </label>
+            <label class="checkbox_label"><input type="checkbox" data-tv="debug"> Debug logging in the browser console</label>
+            <small class="tv-hint">Slash commands: <code>/voicecall</code>, <code>/hangup</code>, <code>/voicesay text</code>.</small>
+        </div>
+    </div>
+</div>
