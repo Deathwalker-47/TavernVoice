@@ -127,14 +127,14 @@
             </label>
             <label>Helper model <small id="tv_helper_status"></small></label>
             <div class="flex-container flexnowrap">
-                <input id="tv_helper_filter" type="search" class="text_pole flex1" placeholder="Filter (e.g. flash, gemini, mistral)">
+                <input id="tv_helper_filter" type="search" class="text_pole flex1" placeholder="Filter (e.g. glm, flash, uncensored)">
                 <div id="tv_helper_refresh" class="menu_button fa-solid fa-rotate" title="Refresh model list"></div>
             </div>
             <select id="tv_helper_model" data-tv="helperModel" class="text_pole"></select>
             <label>Max wait for the first sentence: <span data-tv-out="helperFirstMs"></span> ms
                 <input type="range" data-tv="helperFirstMs" min="300" max="4000" step="100">
             </label>
-            <small class="tv-hint">Later sentences are tagged while earlier ones play, so only the first one can delay the voice. Fast models: gemini-2.5-flash-lite (~1.3 s), mistral-small-3.2 (~1.8 s).</small>
+            <small class="tv-hint">Later sentences are tagged while earlier ones play, so only the first one can delay the voice. The default, GLM 5.3 Flash Uncensored, usually answers in about 1.2 s and doesn't filter adult lines.</small>
             <div id="tv_helper_test" class="menu_button menu_button_icon"><i class="fa-solid fa-vial"></i><span>Test helper</span></div>
             <small id="tv_helper_out" class="tv-hint"></small>
 
