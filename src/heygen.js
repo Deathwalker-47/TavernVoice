@@ -1,8 +1,35 @@
 // Browser client for HeyGen text to speech (v3 voices API).
-// api.heygen.com and its audio host files.heygen.ai both allow browser origins (CORS).
+// api.heygen.com and its audio hosts (files.heygen.ai, resource2.heygen.ai) allow browser origins (CORS).
 
 import { DEFAULT_HEYGEN_BASE } from './constants.js';
 import { ApiError, fetchWithRetry } from './http.js';
+
+/**
+ * What HeyGen Voice (Orca) can speak, from its API errors (Nov 2026). Every public voice uses
+ * Orca, so a public voice can't speak anything else, Malayalam included.
+ */
+const ORCA_LANGUAGES = 'ar be bg ca cs da de el en es fa fi fr he hi hr hu id it ja ko mk ms nl pl pt ro ru sk sl sr sv ta th tl tr uk vi zh'.split(' ');
+
+function languageName(code) {
+    try {
+        return new Intl.DisplayNames(['en'], { type: 'language' }).of(code) || code;
+    } catch {
+        return code;
+    }
+}
+
+const ORCA_NAMES = new Set(ORCA_LANGUAGES.map(c => languageName(c).toLowerCase()));
+
+/**
+ * The engine to ask for with one of your own voices. None means its saved engine, which the API
+ * uses when it can. A saved engine the API lacks (Cartesia, Fish) or none at all falls back to
+ * ElevenLabs, the only one here that speaks Malayalam, then HeyGen Voice.
+ */
+function ownEngine(v) {
+    const allowed = v.available_engines ?? [];
+    if (v.default_engine && allowed.includes(v.default_engine)) return '';
+    return ['elevenlabs', 'orca', 'starfish'].find(e => allowed.includes(e)) || '';
+}
 
 export class HeyGenClient {
     /**
@@ -10,6 +37,8 @@ export class HeyGenClient {
      */
     constructor(getConfig) {
         this.getConfig = getConfig;
+        /** @type {Map<string, string>} your voices' engine, filled when voices are listed */
+        this.engines = new Map();
     }
 
     async #config() {
@@ -26,6 +55,10 @@ export class HeyGenClient {
     async tts({ text, voice, language = 'auto', speed = 1, signal }) {
         const { key, base } = await this.#config();
         const json = { text, voice_id: voice };
+        this.ownListed ??= this.voices([]).catch(() => []);     // your voices' engines, if not listed yet
+        await this.ownListed;
+        const engine = this.engines.get(voice);
+        if (engine) json.engine = engine;
         const lang = !language || language === 'auto' ? '' : String(language).split('-')[0].toLowerCase();
         if (lang) json.language = lang;
         const s = Number(speed);
@@ -43,35 +76,53 @@ export class HeyGenClient {
     }
 
     /**
-     * HeyGen's public voices in the given languages ("Malayalam", "English"). The library has
-     * thousands of voices, so it is only listed one language at a time.
+     * Your own voices (clones and designs), then HeyGen's public voices in the given languages
+     * ("Malayalam", "English"). The public library has thousands of voices and its language filter
+     * only sorts them, so a public voice is kept only when it was made for that language, or is a
+     * multilingual one and Orca speaks the language.
      * @param {string[]} languages
      */
     async voices(languages = []) {
         const { key, base } = await this.#config();
-        const out = [];
-        const seen = new Set();
-        for (const language of languages.map(l => String(l).trim()).filter(Boolean)) {
+        const list = async (params, keep) => {
+            const found = [];
             let token = '';
             for (let page = 0; page < 5; page++) {
-                const q = new URLSearchParams({ type: 'public', language, limit: '100' });
+                const q = new URLSearchParams({ ...params, limit: '100' });
                 if (token) q.set('token', token);
                 const res = await fetchWithRetry(`${base}/v3/voices?${q}`, { method: 'GET', headers: { 'X-Api-Key': key } }, { label: 'HeyGen', retries: 0 });
                 const data = await res.json();
-                for (const v of data?.data ?? []) {
-                    if (!v.voice_id || seen.has(v.voice_id) || !(v.available_engines ?? ['any']).length) continue;
-                    seen.add(v.voice_id);
-                    out.push({
-                        voice_id: v.voice_id,
-                        name: v.name || v.voice_id,
-                        description: v.language || language,
-                        gender: v.gender,
-                        language: v.language || language,
-                    });
-                }
+                found.push(...(data?.data ?? []).filter(v => v.voice_id && (v.available_engines ?? ['any']).length && keep(v)));
                 token = data?.next_token;
                 if (!data?.has_more || !token) break;
             }
+            return found;
+        };
+        const out = [];
+        const seen = new Set();
+        const add = (v, extra) => {
+            if (seen.has(v.voice_id)) return;
+            seen.add(v.voice_id);
+            out.push({ voice_id: v.voice_id, name: v.name || v.voice_id, gender: v.gender, language: v.language || '', ...extra });
+        };
+        // Your own voices are few. A failure here still leaves the public ones.
+        const own = await list({ type: 'private' }, () => true).catch(() => []);
+        const engines = new Map();
+        for (const v of own) {
+            const engine = ownEngine(v);
+            if (engine) engines.set(v.voice_id, engine);
+            add(v, { description: ['your voice', v.language].filter(Boolean).join(', '), custom: true });
+        }
+        this.engines = engines;
+        this.ownListed = Promise.resolve();
+        for (const language of languages.map(l => String(l).trim()).filter(Boolean)) {
+            const wanted = language.toLowerCase();
+            const multilingual = ORCA_NAMES.has(wanted);
+            const fits = (v) => {
+                const l = String(v.language || '').toLowerCase();
+                return l === wanted || (multilingual && l === 'multilingual');
+            };
+            for (const v of await list({ type: 'public', language }, fits)) add(v, { description: v.language || language });
         }
         return out;
     }
