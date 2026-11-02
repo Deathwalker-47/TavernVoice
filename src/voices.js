@@ -20,11 +20,19 @@ export class VoiceRouter {
      * @param {object} [o]
      * @param {() => string} [o.elevenModel] The ElevenLabs model in use
      * @param {() => string[]} [o.heygenLanguages] Languages to list HeyGen voices for
+     * @param {() => string[]} [o.cartesiaLanguages] Languages to list public Cartesia voices for
      */
-    constructor(clients, { elevenModel = () => '', heygenLanguages = () => [] } = {}) {
+    constructor(clients, { elevenModel = () => '', heygenLanguages = () => [], cartesiaLanguages = () => [] } = {}) {
         this.clients = clients;
         this.elevenModel = elevenModel;
         this.heygenLanguages = heygenLanguages;
+        this.cartesiaLanguages = cartesiaLanguages;
+    }
+
+    /** The languages a provider's voice list is limited to, or null when it lists everything. */
+    listedLanguages(provider) {
+        if (provider === 'heygen') return this.heygenLanguages();
+        return provider === 'cartesia' ? this.cartesiaLanguages() : null;
     }
 
     /** How a voice takes speech tags: 'grok' as written, 'eleven' translated, or 'plain' without any. */
@@ -52,7 +60,10 @@ export class VoiceRouter {
      * @returns {Promise<{provider: string, voices: object[], error?: Error}[]>}
      */
     async voices(providers) {
-        const load = (p) => (p === 'heygen' ? this.clients.heygen.voices(this.heygenLanguages()) : this.clients[p].voices());
+        const load = (p) => {
+            const languages = this.listedLanguages(p);
+            return languages ? this.clients[p].voices(languages) : this.clients[p].voices();
+        };
         const results = await Promise.allSettled(providers.map(load));
         return providers.map((provider, i) => {
             const r = results[i];

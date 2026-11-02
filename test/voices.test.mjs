@@ -108,30 +108,45 @@ test('Cartesia: readable errors and a clear message without a key', async () => 
     await assert.rejects(new CartesiaClient(async () => ({ key: '' })).voices(), /No Cartesia API key/);
 });
 
-test('Cartesia: voices page through the library, your own first', async () => {
+test('Cartesia: your own voices, then the public ones suggested per language, each once', async () => {
     const urls = [];
     globalThis.fetch = async (url, init) => {
         urls.push(url);
         assert.equal(init.headers['Cartesia-Version'], '2026-08-14');
-        return url.includes('starting_after')
-            ? json({ data: [{ id: 'c3', name: 'Mine', description: 'Cloned from a sample', language: 'ml', gender: 'feminine', is_owner: true }], has_more: false })
-            : json({
-                data: [
-                    { id: 'c1', name: 'Priya', tagline: 'Warm narrator', description: 'long text', language: 'hi', accents: [{ locale: 'ta-IN' }], gender: 'feminine', is_owner: false },
-                    { id: 'c2', name: 'Arjun', description: 'Calm', gender: 'masculine' },
-                ],
-                has_more: true, next_page: 'c2',
-            });
+        const q = new URL(url).searchParams;
+        if (q.get('is_owner') === 'true') return json({ data: [{ id: 'own', name: 'Niya', description: 'South indian', language: 'ml', gender: null, is_owner: true }], has_more: false });
+        if (q.get('language') === 'ml' && !q.has('starting_after')) {
+            return json({ data: [
+                { id: 'c1', name: 'Priya', tagline: 'Warm narrator', description: 'long text', language: 'hi', accents: [{ locale: 'ta-IN' }], gender: 'feminine', is_owner: false },
+            ], has_more: true, next_page: 'c1' });
+        }
+        if (q.get('language') === 'ml') return json({ data: [{ id: 'c2', name: 'Arjun', description: 'Calm', gender: 'masculine' }], has_more: false });
+        return json({ data: [{ id: 'c1', name: 'Priya', language: 'hi', gender: 'feminine' }, { id: 'c3', name: 'Kavya', language: 'ta', gender: 'feminine' }], has_more: false });
     };
-    const voices = await new CartesiaClient(async () => ({ key: 'k' })).voices();
-    assert.equal(urls.length, 2);
-    assert.equal(urls[0], 'https://api.cartesia.ai/voices?limit=100');
-    assert.match(urls[1], /starting_after=c2/);
+    const voices = await new CartesiaClient(async () => ({ key: 'k' })).voices(['Malayalam', 'ta', 'Klingon']);
+    assert.deepEqual(urls.map(u => new URL(u).search), [
+        '?limit=100&is_owner=true', '?limit=100&language=ml', '?limit=100&language=ml&starting_after=c1', '?limit=100&language=ta',
+    ]);
     assert.deepEqual(voices, [
-        { voice_id: 'c3', name: 'Mine', description: 'Cloned from a sample', gender: 'female', language: 'Malayalam', custom: true },
+        { voice_id: 'own', name: 'Niya', description: 'South indian', gender: '', language: 'Malayalam', custom: true },
         { voice_id: 'c1', name: 'Priya', description: 'Warm narrator', gender: 'female', language: 'Hindi, Tamil', custom: false },
         { voice_id: 'c2', name: 'Arjun', description: 'Calm', gender: 'male', language: '', custom: false },
+        { voice_id: 'c3', name: 'Kavya', description: '', gender: 'female', language: 'Tamil', custom: false },
     ]);
+    // No languages: just your own voices.
+    urls.length = 0;
+    assert.deepEqual((await new CartesiaClient(async () => ({ key: 'k' })).voices([])).map(v => v.voice_id), ['own']);
+    assert.equal(urls.length, 1);
+});
+
+test('router: HeyGen and Cartesia get their voice languages, the others list everything', async () => {
+    const seen = {};
+    const make = (name) => ({ voices: async (...args) => { seen[name] = args; return []; } });
+    const router = new VoiceRouter({ xai: make('xai'), elevenlabs: make('elevenlabs'), heygen: make('heygen'), cartesia: make('cartesia') },
+        { heygenLanguages: () => ['Malayalam'], cartesiaLanguages: () => ['ml', 'Tamil'] });
+    await router.voices(['xai', 'elevenlabs', 'heygen', 'cartesia']);
+    assert.deepEqual(seen, { xai: [], elevenlabs: [], heygen: [['Malayalam']], cartesia: [['ml', 'Tamil']] });
+    assert.equal(router.listedLanguages('xai'), null);
 });
 
 test('router: a sound-only chunk is skipped quietly for a voice without tags', async () => {

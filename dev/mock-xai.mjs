@@ -162,13 +162,12 @@ const server = http.createServer(async (req, res) => {
         return res.writeHead(200, { 'Content-Type': 'audio/wav' }).end(fakeSpeechWav(json.transcript ?? ''));
     }
     if (url.pathname === '/voices') {
-        return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
-            data: [
-                { id: 'mock-cartesia-1', name: 'Priya', description: 'Warm and bright', language: 'ml', gender: 'feminine', is_owner: false },
-                { id: 'mock-cartesia-2', name: 'My Clone', description: 'Cloned voice', language: 'en', gender: 'masculine', is_owner: true },
-            ],
-            has_more: false,
-        }));
+        const data = url.searchParams.get('is_owner') === 'true'
+            ? [{ id: 'mock-cartesia-2', name: 'My Clone', description: 'Cloned voice', language: 'en', gender: 'masculine', is_owner: true }]
+            : url.searchParams.get('language') === 'ml'
+                ? [{ id: 'mock-cartesia-1', name: 'Priya', description: 'Warm and bright', language: 'ml', gender: 'feminine', is_owner: false }]
+                : [];
+        return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ data, has_more: false }));
     }
     if (url.pathname === '/v1/realtime/client_secrets') {
         console.log(`[${stamp}] client_secrets requested -> 404 (mock forces batch fallback)`);

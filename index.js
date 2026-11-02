@@ -33,6 +33,7 @@ const DEFAULTS = Object.freeze({
     cartesiaKey: '',
     cartesiaBase: DEFAULT_CARTESIA_BASE,
     cartesiaModel: 'sonic-3.6',
+    cartesiaLanguages: 'Malayalam',  // besides your own voices, the public ones Cartesia suggests for these
     defaultVoice: 'eve',
     labText: 'Hi! This is how I sound on a call. [laugh] <whisper>Pretty nice, right?</whisper>',
     language: 'en',
@@ -127,6 +128,7 @@ const router = new VoiceRouter({
 }, {
     elevenModel: () => settings().elevenModel,
     heygenLanguages: () => String(settings().heygenLanguages || '').split(',').map(l => l.trim()).filter(Boolean),
+    cartesiaLanguages: () => String(settings().cartesiaLanguages || '').split(',').map(l => l.trim()).filter(Boolean),
 });
 
 /** Whether a provider's key is set (xAI can also borrow SillyTavern's own key). */
@@ -1337,7 +1339,8 @@ async function loadVoices({ quiet = false, providers = Object.keys(PROVIDERS) } 
         if (voices.length || provider !== 'xai') voiceList = [...voiceList.filter(v => v.provider !== provider), ...voices];
         const mine = voiceList.filter(v => v.provider === provider);
         const custom = mine.filter(v => v.custom).length;
-        const where = provider === 'heygen' ? ` in ${router.heygenLanguages().join(', ') || 'no language'}` : '';
+        const languages = router.listedLanguages(provider);
+        const where = languages ? ` in ${languages.join(', ') || 'no language'}` : '';
         const count = `${mine.length} voice${mine.length === 1 ? '' : 's'}`;
         pill.text(`Connected · ${count}${where}${custom ? ` (${custom} custom)` : ''}`).addClass('tv-ok');
         if (quiet) continue;
@@ -1458,7 +1461,7 @@ function bindSettings() {
     // Text fields save on every keystroke; their voices reload once the field is left.
     root.on('change', '[data-tv=elevenKey], [data-tv=elevenBase]', () => loadVoices({ quiet: true, providers: ['elevenlabs'] }));
     root.on('change', '[data-tv=heygenKey], [data-tv=heygenBase], [data-tv=heygenLanguages]', () => loadVoices({ quiet: true, providers: ['heygen'] }));
-    root.on('change', '[data-tv=cartesiaKey], [data-tv=cartesiaBase]', () => loadVoices({ quiet: true, providers: ['cartesia'] }));
+    root.on('change', '[data-tv=cartesiaKey], [data-tv=cartesiaBase], [data-tv=cartesiaLanguages]', () => loadVoices({ quiet: true, providers: ['cartesia'] }));
 
     $('#tv_helper_refresh').on('click', () => loadHelperModels(true));
     $('#tv_helper_filter').on('input', () => renderHelperModels());
