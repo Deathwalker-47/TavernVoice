@@ -973,7 +973,9 @@ async function refreshCallButton() {
     const single = !c.groupId && c.characterId !== undefined && c.characterId !== null;
     const cfg = single ? await getCharVoice(c.characterId) : null;
     if (seq !== refreshSeq) return;
-    btn.toggleClass('displayNone', !cfg?.enabled).attr('title', cfg?.enabled ? `Voice call ${c.characters[c.characterId]?.name}` : '');
+    const who = cfg?.enabled ? whoAnswers(cfg) : {};
+    const name = who.person?.name || (who.ask ? `someone in ${c.characters[c.characterId]?.name}` : c.characters[c.characterId]?.name);
+    btn.toggleClass('displayNone', !cfg?.enabled).attr('title', cfg?.enabled ? `Voice call ${name}` : '');
 }
 
 async function refreshCharButton() {
