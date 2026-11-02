@@ -134,6 +134,9 @@ export function toSpeechText(raw, opts = {}) {
     t = t.replace(/<([a-z-]+)>\s*<\/\1>/g, ' ');
     t = t.replace(/[ \t ]+/g, ' ');
     t = t.replace(/ *\n */g, '\n').replace(/\n{2,}/g, '\n');
+    // A reply can stream "..." and be saved with "…". One spelling keeps the two lined up,
+    // so SpeechTurn finds where it left off instead of skipping two characters.
+    t = t.replace(/\.{3,}/g, '…');
     t = t.replace(/ +([,.!?;:…])/g, '$1');
     t = t.replace(/^\s+/, '');
     if (final) t = t.trim();

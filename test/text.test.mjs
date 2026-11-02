@@ -90,6 +90,18 @@ test('SpeechTurn: re-anchors when final text differs from streamed text', () => 
     assert.deepEqual(rest, ['How are you doing today?']);
 });
 
+test('SpeechTurn: a reply streamed with "..." and saved with "…" loses no characters', () => {
+    // Seen live: the second chunk began "ന്നായി", two characters short.
+    const streamed = 'വീണ്ടും? അഞ്ചാമത്തെ വിളിയാണിതേ... നന്നായി പറഞ്ഞു കേട്കൂ, എന്താ';
+    const saved = 'വീണ്ടും? അഞ്ചാമത്തെ വിളിയാണിതേ… നന്നായി പറഞ്ഞു കേട്കൂ, എന്താ വിഷമം?';
+    const turn = new SpeechTurn({});
+    const spoken = [];
+    for (let i = 1; i <= streamed.length; i += 2) spoken.push(...turn.update(streamed.slice(0, i)));
+    spoken.push(...turn.update(saved, true));
+    assert.deepEqual(spoken, ['വീണ്ടും? അഞ്ചാമത്തെ വിളിയാണിതേ…', 'നന്നായി പറഞ്ഞു കേട്കൂ, എന്താ വിഷമം?']);
+    assert.equal(toSpeechText('Wait.... what...?', { final: true }), 'Wait… what…?');
+});
+
 test('captionHtml escapes text and renders tags', () => {
     assert.equal(captionHtml('a <b> [laugh] <whisper>x</whisper>'), 'a &lt;b&gt; <span class="tv-tag">laugh</span> <span class="tv-wrap tv-wrap-whisper" title="whisper">x</span>');
 });
