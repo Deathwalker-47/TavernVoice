@@ -615,6 +615,42 @@
     opacity: 0.6;
 }
 
+.tv-cast {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+}
+
+.tv-cast-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.tv-person {
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 6px;
+    padding: 6px 8px;
+}
+
+.tv-person[open] {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.tv-person summary {
+    cursor: pointer;
+    overflow-wrap: anywhere;
+}
+
+.tv-person summary small {
+    opacity: 0.7;
+}
+
 /* With a photo or video showing, the avatar shrinks so the window still fits a phone. */
 .tv-call:has(.tv-media:not(.tv-empty)) .tv-avatar-wrap {
     width: 48px;
