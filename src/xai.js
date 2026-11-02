@@ -1,27 +1,24 @@
 // Browser client for the xAI Grok voice APIs (TTS, STT, streaming STT).
 // api.x.ai answers CORS preflights with "*", so these calls go straight from the browser.
 
-import { DEFAULT_API_BASE, STT_MODEL } from './constants.js';
+import { DEFAULT_API_BASE, STT_MODEL, LANGUAGES, STT_LANGUAGES } from './constants.js';
+import { ApiError, fetchWithRetry } from './http.js';
 
-export class XaiError extends Error {
+export class XaiError extends ApiError {
     constructor(message, status = 0, detail = null) {
-        super(message);
+        super(message, status, detail);
         this.name = 'XaiError';
-        this.status = status;
-        this.detail = detail;
     }
 }
 
-const sleep = (ms, signal) => new Promise((resolve, reject) => {
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => {
-        clearTimeout(t);
-        reject(new DOMException('Aborted', 'AbortError'));
-    }, { once: true });
-});
+/** "pt-BR" -> "pt": STT wants a plain language code, and one it knows. Anything else is auto-detected. */
+const sttLanguage = (lang) => {
+    const base = (!lang || lang === 'auto') ? '' : String(lang).split('-')[0].toLowerCase();
+    return STT_LANGUAGES.has(base) ? base : '';
+};
 
-/** "pt-BR" -> "pt": STT wants a plain language code. */
-const sttLanguage = (lang) => (!lang || lang === 'auto') ? '' : String(lang).split('-')[0].toLowerCase();
+/** Grok voices speak the languages in LANGUAGES. Others (Malayalam, Tamil, ...) fall back to auto. */
+const XAI_TTS_LANGUAGES = new Set(LANGUAGES.map(([code]) => code));
 
 export class XaiClient {
     /**
@@ -51,29 +48,7 @@ export class XaiClient {
         } else if (form) {
             body = form;
         }
-
-        for (let attempt = 0; ; attempt++) {
-            let res;
-            try {
-                res = await fetch(`${base}${path}`, { method, headers, body, signal });
-            } catch (err) {
-                if (err?.name === 'AbortError') throw err;
-                if (attempt < retries) {
-                    await sleep(400 * 2 ** attempt, signal);
-                    continue;
-                }
-                throw new XaiError(`Network error talking to xAI: ${err?.message ?? err}`);
-            }
-            if (res.ok) return res;
-            if ((res.status === 429 || res.status >= 500) && attempt < retries) {
-                await sleep(500 * 2 ** attempt, signal);
-                continue;
-            }
-            let detail = null;
-            try { detail = await res.json(); } catch { /* not JSON */ }
-            const msg = detail?.error?.message ?? detail?.error ?? detail?.message ?? res.statusText;
-            throw new XaiError(`xAI ${res.status}: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`, res.status, detail);
-        }
+        return fetchWithRetry(`${base}${path}`, { method, headers, body, signal }, { label: 'xAI', retries, ErrorClass: XaiError });
     }
 
     /**
@@ -84,7 +59,7 @@ export class XaiClient {
         const json = {
             text,
             voice_id: voice || 'eve',
-            language: language || 'auto',
+            language: XAI_TTS_LANGUAGES.has(language) ? language : 'auto',
             output_format: { codec: 'mp3', sample_rate: 24000, bit_rate: 128000 },
         };
         const s = Number(speed);

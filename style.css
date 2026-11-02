@@ -576,6 +576,13 @@
     border-color: #e5484d;
 }
 
+.tv-provider {
+    margin: 8px 0;
+    padding: 6px 8px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+}
+
 .tv-current-char .menu_button {
     margin-top: 6px;
     width: fit-content;

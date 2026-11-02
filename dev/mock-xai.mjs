@@ -1,8 +1,9 @@
-// Local stand-in for api.x.ai so the full call loop can be tested without an xAI key.
+// Local stand-in for api.x.ai, ElevenLabs and HeyGen, so the full call loop can be tested without keys.
 //
 //   node dev/mock-xai.mjs            (listens on http://localhost:8787)
 //
-// In TavernVoice settings set "API base URL" to http://localhost:8787/v1 and any API key.
+// In TavernVoice settings set "xAI API base URL" to http://localhost:8787/v1, the ElevenLabs and
+// HeyGen base URLs to http://localhost:8787, and any API keys.
 // It also serves an OpenAI-compatible streaming chat endpoint, so SillyTavern can use
 // Chat Completion -> Custom (OpenAI-compatible) -> http://localhost:8787/v1 as the "LLM".
 
@@ -20,6 +21,7 @@ const REPLIES = [
 const STT_LINES = ['Hey, can you hear me okay?', 'I had the weirdest day today.', 'Tell me something nice.', 'Okay, I should probably go soon.'];
 let replyIdx = 0;
 let sttIdx = 0;
+const heygenAudio = new Map(); // id -> text, served at /mock/audio/<id>.wav like HeyGen's audio_url
 let tokenDelayMs = 25; // POST /mock/config {"tokenDelayMs": 150} to simulate a slow LLM
 
 function cors(res) {
@@ -112,6 +114,45 @@ const server = http.createServer(async (req, res) => {
         const text = STT_LINES[sttIdx++ % STT_LINES.length];
         console.log(`[${stamp}] STT (${auth}) ${body.length} bytes, wav=${body.includes(Buffer.from('RIFF'))} -> "${text}"`);
         return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ text, language: 'en', duration: 1.2, words: [] }));
+    }
+    // ElevenLabs
+    if (url.pathname.startsWith('/v1/text-to-speech/') && req.method === 'POST') {
+        const json = JSON.parse(body.toString() || '{}');
+        const voice = decodeURIComponent(url.pathname.split('/').pop());
+        const key = req.headers['xi-api-key'] ? 'key ok' : 'NO KEY';
+        console.log(`[${stamp}] ElevenLabs TTS (${key}) voice=${voice} model=${json.model_id} lang=${json.language_code ?? '-'} speed=${json.voice_settings?.speed ?? 1}: ${json.text}`);
+        return res.writeHead(200, { 'Content-Type': 'audio/wav' }).end(fakeSpeechWav(json.text ?? ''));
+    }
+    if (url.pathname === '/v2/voices') {
+        return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
+            voices: [
+                { voice_id: 'mockEleven1', name: 'Asha', category: 'premade', labels: { gender: 'female', accent: 'indian', description: 'warm' }, verified_languages: [{ language: 'ml', model_id: 'eleven_v4_turbo' }] },
+                { voice_id: 'mockEleven2', name: 'Dev', category: 'cloned', labels: { gender: 'male' } },
+            ],
+            has_more: false,
+        }));
+    }
+    // HeyGen: speech answers with a link to the audio, like the real API
+    if (url.pathname === '/v3/voices/speech' && req.method === 'POST') {
+        const json = JSON.parse(body.toString() || '{}');
+        const id = heygenAudio.size + 1;
+        heygenAudio.set(id, json.text ?? '');
+        const key = req.headers['x-api-key'] ? 'key ok' : 'NO KEY';
+        console.log(`[${stamp}] HeyGen TTS (${key}) voice=${json.voice_id} lang=${json.language ?? '-'} speed=${json.speed ?? 1}: ${json.text}`);
+        return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
+            data: { audio_url: `http://localhost:${PORT}/mock/audio/${id}.wav`, duration: 1, engine: 'starfish', request_id: `mock-${id}` },
+        }));
+    }
+    if (url.pathname === '/v3/voices') {
+        const language = url.searchParams.get('language');
+        const data = language === 'Malayalam'
+            ? [{ voice_id: 'mockHeygenMl', name: 'Meera', language: 'Malayalam', gender: 'female', type: 'public', support_pause: true, support_locale: false, available_engines: ['starfish'], default_engine: 'starfish' }]
+            : [];
+        return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ data, has_more: false, next_token: null }));
+    }
+    if (url.pathname.startsWith('/mock/audio/')) {
+        const text = heygenAudio.get(Number(url.pathname.match(/(\d+)\.wav$/)?.[1])) ?? '';
+        return res.writeHead(200, { 'Content-Type': 'audio/wav' }).end(fakeSpeechWav(text));
     }
     if (url.pathname === '/v1/realtime/client_secrets') {
         console.log(`[${stamp}] client_secrets requested -> 404 (mock forces batch fallback)`);

@@ -1,8 +1,14 @@
-// TavernVoice: phone-style voice calls with your character, powered by xAI Grok TTS + STT.
+// TavernVoice: phone-style voice calls with your character. xAI Grok listens; Grok, ElevenLabs or HeyGen voices speak.
 // Entry point loaded by SillyTavern (see manifest.json).
 
-import { EXTENSION_KEY, PROMPT_KEY, DEFAULT_API_BASE, FALLBACK_VOICES, LANGUAGES } from './src/constants.js';
+import {
+    EXTENSION_KEY, PROMPT_KEY, DEFAULT_API_BASE, DEFAULT_ELEVEN_BASE, DEFAULT_HEYGEN_BASE,
+    ELEVEN_MODELS, FALLBACK_VOICES, LANGUAGES, MORE_LANGUAGES,
+} from './src/constants.js';
 import { XaiClient, SttStream } from './src/xai.js';
+import { ElevenLabsClient } from './src/elevenlabs.js';
+import { HeyGenClient } from './src/heygen.js';
+import { PROVIDERS, VoiceRouter, parseVoice } from './src/voices.js';
 import { getAudioContext, MicInput, SpeechPlayer, Sounds } from './src/audio.js';
 import { encodeWav } from './src/dsp.js';
 import { SpeechTurn, captionHtml, decorateTagsHtml, isSpeakable, toSpeechText } from './src/text.js';
@@ -16,6 +22,13 @@ const TAG = '[TavernVoice]';
 const DEFAULTS = Object.freeze({
     apiKey: '',
     apiBase: DEFAULT_API_BASE,
+    // More voices: ElevenLabs and HeyGen speak languages Grok doesn't, such as Malayalam.
+    elevenKey: '',
+    elevenBase: DEFAULT_ELEVEN_BASE,
+    elevenModel: 'eleven_v4_turbo',
+    heygenKey: '',
+    heygenBase: DEFAULT_HEYGEN_BASE,
+    heygenLanguages: 'Malayalam',  // HeyGen's library is huge, so only these languages are listed
     defaultVoice: 'eve',
     labText: 'Hi! This is how I sound on a call. [laugh] <whisper>Pretty nice, right?</whisper>',
     language: 'en',
@@ -93,7 +106,30 @@ async function getConfig() {
 }
 
 const client = new XaiClient(getConfig);
-let voiceList = [...FALLBACK_VOICES];
+const router = new VoiceRouter({
+    xai: client,
+    elevenlabs: new ElevenLabsClient(async () => {
+        const s = settings();
+        return { key: s.elevenKey?.trim(), base: s.elevenBase?.trim(), model: s.elevenModel };
+    }),
+    heygen: new HeyGenClient(async () => {
+        const s = settings();
+        return { key: s.heygenKey?.trim(), base: s.heygenBase?.trim() };
+    }),
+}, {
+    elevenModel: () => settings().elevenModel,
+    heygenLanguages: () => String(settings().heygenLanguages || '').split(',').map(l => l.trim()).filter(Boolean),
+});
+
+/** Whether a provider's key is set (xAI can also borrow SillyTavern's own key). */
+async function hasKey(provider) {
+    const s = settings();
+    if (provider === 'elevenlabs') return !!s.elevenKey?.trim();
+    if (provider === 'heygen') return !!s.heygenKey?.trim();
+    return !!(await getConfig()).key;
+}
+
+let voiceList = FALLBACK_VOICES.map(v => ({ ...v, provider: 'xai' }));
 /** Sentinel <option> value that opens the custom voice ID prompt. */
 const CUSTOM_VOICE = '__custom__';
 
@@ -140,7 +176,7 @@ async function helperTag(text, { char = '', context = '', timeoutMs = 1500, unti
         if (!res.ok) return text;
         const data = await res.json();
         if (!data?.text || data.error) return text;
-        // Re-run our own cleanup so only official, allowed tags reach Grok.
+        // Re-run our own cleanup so only official, allowed tags reach the voice.
         const cleaned = toSpeechText(data.text, { mode: 'all', actionSounds: false, tagLevel: s.tagLevel });
         return isSpeakable(cleaned) ? cleaned : text;
     } catch {
@@ -259,7 +295,8 @@ function micErrorMessage(err) {
     return err?.message || String(err);
 }
 
-const words = (s) => String(s).toLowerCase().replace(/<[^>]+>|\[[^\]]+\]/g, ' ').match(/[\p{L}\p{N}']+/gu) ?? [];
+// \p{M}: vowel signs in Malayalam and other Indic scripts are marks, and belong to the word.
+const words = (s) => String(s).toLowerCase().replace(/<[^>]+>|\[[^\]]+\]/g, ' ').match(/[\p{L}\p{M}\p{N}']+/gu) ?? [];
 
 // ---------------------------------------------------------------------------
 // The call
@@ -280,6 +317,8 @@ class CallSession {
         this.name = this.callee || this.char.name;
         this.cast = castOf(charCfg).map(p => p.name);
         this.voice = resolveVoice(voiceFor(charCfg, person));
+        this.provider = parseVoice(this.voice.voice).provider;
+        this.tagStyle = router.tagStyle(this.voice.voice); // HeyGen voices get no tags, so the LLM is told not to write them
         this.inputMode = this.s.inputMode;
 
         this.player = new SpeechPlayer();
@@ -453,7 +492,7 @@ class CallSession {
             return;
         }
         // With the voice director on, the main LLM writes plain dialogue and the helper adds tags.
-        const promptTags = s.helperTags ? 'none' : s.tagLevel;
+        const promptTags = s.helperTags ? 'none' : this.tagLevel();
         const text = buildCallPrompt({
             template: s.promptTemplate, tagLevel: promptTags, voiceNotes: this.voice.notes, greeting,
             callee: this.callee, about: this.person?.about || '', others: this.callee ? this.cast : [],
@@ -462,8 +501,13 @@ class CallSession {
         ctx().setExtensionPrompt(PROMPT_KEY, text, 1, Number(s.promptDepth) || 0, false, 0);
     }
 
+    /** The expressiveness setting, or none for a voice that can't do tags. */
+    tagLevel() {
+        return this.tagStyle === 'plain' ? 'none' : this.s.tagLevel;
+    }
+
     speechOpts() {
-        return { mode: this.s.speakMode, actionSounds: this.s.actionSounds, tagLevel: this.s.tagLevel, charName: this.char.name };
+        return { mode: this.s.speakMode, actionSounds: this.s.actionSounds, tagLevel: this.tagLevel(), charName: this.char.name };
     }
 
     // --- the character talking ------------------------------------------
@@ -542,11 +586,11 @@ class CallSession {
             const first = (this.turnChunks++ || 0) === 0;
             const budget = first ? Number(this.s.helperFirstMs) || 1500 : 8000;
             this.player.enqueue(async (signal, needed) => {
-                const spoken = this.s.helperTags
+                const spoken = this.s.helperTags && this.tagStyle !== 'plain'
                     ? await helperTag(text, { char: this.name, context: lastUserLine(), timeoutMs: budget, until: first ? null : needed })
                     : text;
                 meta.text = spoken; // the caption shows what the voice actually gets
-                return client.tts({ text: spoken, voice, language, speed, signal });
+                return router.tts({ text: spoken, voice, language, speed, signal });
             }, meta);
         }
     }
@@ -556,7 +600,8 @@ class CallSession {
         if (this.lastTtsToast && Date.now() - this.lastTtsToast < 8000) return;
         this.lastTtsToast = Date.now();
         toastr.error(err?.message || String(err), 'TavernVoice: voice generation failed');
-        if (err?.status === 401 || err?.status === 403) this.end('Invalid xAI API key');
+        // 401/403: a bad key, or (ElevenLabs) no credits left. The toast above has the provider's reason.
+        if (err?.status === 401 || err?.status === 403) this.end(`${PROVIDERS[this.provider]} refused the voice request`);
     }
 
     // --- the user talking -----------------------------------------------
@@ -870,9 +915,8 @@ async function startCall() {
         toastr.info(`Voice calls are off for ${name}. Turn them on with the phone button in the character card.`, 'TavernVoice');
         return;
     }
-    const { key } = await getConfig();
-    if (!key) {
-        toastr.warning('Add your xAI API key in Extensions → TavernVoice first.', 'TavernVoice');
+    if (!(await hasKey('xai'))) {
+        toastr.warning('Calls listen to you with xAI Grok. Add your xAI API key in Extensions → TavernVoice first.', 'TavernVoice');
         return;
     }
     if (c.onlineStatus === 'no_connection') {
@@ -881,6 +925,11 @@ async function startCall() {
     }
     const picked = await pickCallee(cfg, name);
     if (!picked) return;
+    const { provider } = parseVoice(resolveVoice(voiceFor(cfg, picked.person ?? null)).voice);
+    if (!(await hasKey(provider))) {
+        toastr.warning(`${picked.person?.name || name} has a ${PROVIDERS[provider]} voice. Add your ${PROVIDERS[provider]} API key in Extensions → TavernVoice first.`, 'TavernVoice');
+        return;
+    }
     call = new CallSession(c.characterId, cfg, picked.person ?? null);
     refreshCallButton();
     try {
@@ -904,10 +953,11 @@ async function speakOnce(rawText, chid, person = null) {
     const cfg = resolveVoice(voiceFor(await getCharVoice(chid), person));
     const s = settings();
     oneShot.setVolume(s.volume);
+    const plain = router.tagStyle(cfg.voice) === 'plain';
     const turn = new SpeechTurn({
         mode: s.speakMode,
         actionSounds: s.actionSounds,
-        tagLevel: s.tagLevel,
+        tagLevel: plain ? 'none' : s.tagLevel,
         charName: ctx().characters[chid]?.name ?? '',
         // Not streaming, so fewer and longer chunks sound more natural.
         chunking: { firstMinChars: 12, minChars: 200, maxChars: 900 },
@@ -920,8 +970,8 @@ async function speakOnce(rawText, chid, person = null) {
     const name = person?.name || (ctx().characters[chid]?.name ?? '');
     for (const chunk of chunks) {
         oneShot.enqueue(async (signal) => {
-            const text = s.helperTags ? await helperTag(chunk, { char: name, timeoutMs: 8000 }) : chunk;
-            return client.tts({ text, voice: cfg.voice, language: cfg.language, speed: cfg.speed, signal });
+            const text = s.helperTags && !plain ? await helperTag(chunk, { char: name, timeoutMs: 8000 }) : chunk;
+            return router.tts({ text, voice: cfg.voice, language: cfg.language, speed: cfg.speed, signal });
         }, { text: chunk });
     }
 }
@@ -990,17 +1040,29 @@ async function refreshCharButton() {
         .attr('title', cfg?.enabled ? 'Voice calls: ON (click for voice settings)' : 'Voice calls: OFF (click to set up)');
 }
 
-/** Voice <option>s grouped by source: the team's custom voices, xAI's built-ins, then anything typed in. */
+/** A voice's display name; heygen:/elevenlabs: IDs are long hex strings. */
+const voiceName = (ref) => voiceList.find(v => v.voice_id === ref)?.name ?? ref;
+
+/** Voice <option>s grouped by source: the xAI team's custom voices, xAI's built-ins, ElevenLabs, HeyGen, then anything typed in. */
 function voiceOptionsHtml(selected, { withDefault = false, defaultLabel = '' } = {}) {
     const esc = (t) => $('<span>').text(t).html();
     const option = (v) => {
-        const desc = v.description || FALLBACK_VOICES.find(f => f.voice_id === v.voice_id)?.description;
+        const desc = v.provider === 'xai'
+            ? v.description || FALLBACK_VOICES.find(f => f.voice_id === v.voice_id)?.description
+            : [v.description, v.gender].filter(Boolean).join(', ');
         return `<option value="${esc(v.voice_id)}" ${v.voice_id === selected ? 'selected' : ''}>${esc(v.name)}${desc ? ` — ${esc(desc)}` : ''}</option>`;
     };
-    const opts = withDefault ? [`<option value="">${esc(defaultLabel || `Default (${settings().defaultVoice})`)}</option>`] : [];
-    const custom = voiceList.filter(v => v.custom);
-    if (custom.length) opts.push(`<optgroup label="Your custom voices">${custom.map(option).join('')}</optgroup>`);
-    opts.push(`<optgroup label="xAI voices">${voiceList.filter(v => !v.custom).map(option).join('')}</optgroup>`);
+    const opts = withDefault ? [`<option value="">${esc(defaultLabel || `Default (${voiceName(settings().defaultVoice)})`)}</option>`] : [];
+    const groups = [
+        ['Your custom voices (xAI)', v => v.provider === 'xai' && v.custom],
+        ['xAI Grok voices', v => v.provider === 'xai' && !v.custom],
+        ['ElevenLabs voices', v => v.provider === 'elevenlabs'],
+        ['HeyGen voices', v => v.provider === 'heygen'],
+    ];
+    for (const [label, test] of groups) {
+        const list = voiceList.filter(test);
+        if (list.length) opts.push(`<optgroup label="${label}">${list.map(option).join('')}</optgroup>`);
+    }
     if (selected && selected !== CUSTOM_VOICE && !voiceList.some(v => v.voice_id === selected)) {
         opts.push(`<optgroup label="Other"><option value="${esc(selected)}" selected>${esc(selected)} (voice ID)</option></optgroup>`);
     }
@@ -1011,19 +1073,21 @@ function voiceOptionsHtml(selected, { withDefault = false, defaultLabel = '' } =
 /** Ask for a voice ID that isn't in the list. Resolves to the ID, or '' if cancelled. */
 async function askCustomVoice(current) {
     const c = ctx();
-    const id = await c.callGenericPopup('xAI voice ID. Custom voices only work with a key from the xAI team that made them (xAI offers voice cloning in the US only).',
+    const id = await c.callGenericPopup('Voice ID. A plain ID is an xAI voice (custom xAI voices only work with a key from the xAI team that made them). For the others write elevenlabs:<voice ID> or heygen:<voice ID>.',
         c.POPUP_TYPE.INPUT, current && current !== CUSTOM_VOICE ? current : '');
     const clean = String(id || '').trim();
-    if (clean && !/^[\w-]{1,64}$/.test(clean)) {
-        toastr.warning('Voice IDs are letters, digits, - and _ only.', 'TavernVoice');
+    if (clean && !/^((xai|elevenlabs|heygen):)?[\w-]{1,64}$/.test(clean)) {
+        toastr.warning('Voice IDs are letters, digits, - and _ only, after an optional elevenlabs: or heygen:.', 'TavernVoice');
         return '';
     }
     return clean;
 }
 
 function languageOptionsHtml(selected, { withDefault = false } = {}) {
+    const option = ([code, label]) => `<option value="${code}" ${code === selected ? 'selected' : ''}>${label}</option>`;
     const opts = withDefault ? [`<option value="">Default (${settings().language})</option>`] : [];
-    for (const [code, label] of LANGUAGES) opts.push(`<option value="${code}" ${code === selected ? 'selected' : ''}>${label}</option>`);
+    opts.push(...LANGUAGES.map(option));
+    opts.push(`<optgroup label="ElevenLabs and HeyGen voices only">${MORE_LANGUAGES.map(option).join('')}</optgroup>`);
     return opts.join('');
 }
 
@@ -1049,7 +1113,7 @@ async function findCast(ch, current) {
         first_mes: sub(ch.first_mes), mes_example: sub(ch.mes_example), lore: sub(await cardLore(ch)),
     };
     const voices = voiceList.map(v => ({
-        voice_id: v.voice_id, name: v.name, gender: v.gender || '',
+        voice_id: v.voice_id, name: v.name, gender: v.gender || '', language: v.language || '',
         description: v.description || FALLBACK_VOICES.find(f => f.voice_id === v.voice_id)?.description || '',
     }));
     const res = await fetch(`${helperBase()}/helper/cast`, {
@@ -1068,7 +1132,7 @@ function bindCastEditor($el, chid, ch, cfg) {
     const esc = (t) => $('<span>').text(t).html();
     const $list = $el.find('.tv-cast-list');
     let cast = castOf(cfg);
-    const voiceName = (id) => (id ? voiceList.find(v => v.voice_id === id)?.name ?? id : 'card\'s voice');
+    const personVoice = (id) => (id ? voiceName(id) : 'card\'s voice');
 
     const save = (patch = {}) => setCharVoice(chid, { cast, callees: '', ...patch });
 
@@ -1085,7 +1149,7 @@ function bindCastEditor($el, chid, ch, cfg) {
     function render(openIndex = -1) {
         $list.html(cast.map((p, i) => `
             <details class="tv-person" data-i="${i}"${i === openIndex ? ' open' : ''}>
-                <summary><b class="tv-person-name">${esc(p.name || 'New person')}</b> <small class="tv-person-voice">${esc(voiceName(p.voice))}</small></summary>
+                <summary><b class="tv-person-name">${esc(p.name || 'New person')}</b> <small class="tv-person-voice">${esc(personVoice(p.voice))}</small></summary>
                 <label class="tv-notes">Name<input data-f="name" class="text_pole" type="text"></label>
                 <label class="tv-notes">Voice<select data-f="voice" class="text_pole">${voiceOptionsHtml(p.voice, { withDefault: true, defaultLabel: 'Same as the card' })}</select></label>
                 <label class="tv-notes">Who they are <small>(the AI plays them from this on their calls)</small><textarea data-f="about" class="text_pole" rows="3"></textarea></label>
@@ -1119,7 +1183,7 @@ function bindCastEditor($el, chid, ch, cfg) {
             $(e.target).html(voiceOptionsHtml(value, { withDefault: true, defaultLabel: 'Same as the card' }));
         }
         cast[i][f] = f === 'name' ? value.trim() : value;
-        if (f === 'voice') $(e.target).closest('.tv-person').find('.tv-person-voice').text(voiceName(value));
+        if (f === 'voice') $(e.target).closest('.tv-person').find('.tv-person-voice').text(personVoice(value));
         if (f === 'name') renderAnswers();
         await save({ answers: cfg.answers });
     });
@@ -1231,24 +1295,46 @@ function renderVoicePickers() {
     $('#tv_default_voice').html(voiceOptionsHtml(s.defaultVoice));
     $('#tv_lab_voice').html(voiceOptionsHtml(labVoice));
     const v = voiceList.find(x => x.voice_id === labVoice);
-    const kind = v ? (v.custom ? 'Your custom voice' : 'xAI voice') : 'Voice ID not in the list';
-    $('#tv_lab_info').text([kind, `id ${labVoice}`, v?.gender, v?.language].filter(Boolean).join(' · '));
+    const { provider, id } = parseVoice(labVoice);
+    const kind = v ? (v.provider === 'xai' && v.custom ? 'Your custom xAI voice' : `${PROVIDERS[provider]} voice`) : `${PROVIDERS[provider]} voice ID not in the list`;
+    const plain = router.tagStyle(labVoice) === 'plain' ? 'speaks without voice tags' : '';
+    $('#tv_lab_info').text([kind, `id ${id}`, v?.gender, v?.language, plain].filter(Boolean).join(' · '));
 }
 
-async function loadVoices({ quiet = false } = {}) {
-    const status = $('#tv_status');
-    try {
-        status.text('Checking key…').removeClass('tv-ok tv-bad');
-        const list = await client.voices();
-        if (list.length) voiceList = list;
-        const custom = voiceList.filter(v => v.custom).length;
-        status.text(`Connected · ${voiceList.length} voices${custom ? ` (${custom} custom)` : ''}`).addClass('tv-ok');
-        renderVoicePickers();
-        if (!quiet) toastr.success(`xAI key works. ${voiceList.length} voices available.`, 'TavernVoice');
-    } catch (err) {
-        status.text(err?.status === 401 ? 'No key / invalid key' : 'Not connected').addClass('tv-bad');
-        if (!quiet) toastr.error(err?.message || String(err), 'TavernVoice');
+const STATUS_PILLS = { xai: '#tv_status', elevenlabs: '#tv_status_elevenlabs', heygen: '#tv_status_heygen' };
+
+/** Loads each provider's voices into the pickers. ElevenLabs and HeyGen are skipped until they have a key. */
+async function loadVoices({ quiet = false, providers = Object.keys(PROVIDERS) } = {}) {
+    const wanted = [];
+    for (const p of providers) {
+        const pill = $(STATUS_PILLS[p]).removeClass('tv-ok tv-bad');
+        if (p !== 'xai' && !(await hasKey(p))) {
+            pill.text('No key');
+            voiceList = voiceList.filter(v => v.provider !== p);
+            continue;
+        }
+        pill.text('Checking key…');
+        wanted.push(p);
     }
+    for (const { provider, voices, error } of await router.voices(wanted)) {
+        const pill = $(STATUS_PILLS[provider]);
+        const label = PROVIDERS[provider];
+        if (error) {
+            pill.text(error?.status === 401 ? 'No key / invalid key' : 'Not connected').addClass('tv-bad');
+            if (!quiet) toastr.error(error?.message || String(error), 'TavernVoice');
+            continue;
+        }
+        if (voices.length || provider !== 'xai') voiceList = [...voiceList.filter(v => v.provider !== provider), ...voices];
+        const mine = voiceList.filter(v => v.provider === provider);
+        const custom = mine.filter(v => v.custom).length;
+        const where = provider === 'heygen' ? ` in ${router.heygenLanguages().join(', ') || 'no language'}` : '';
+        const count = `${mine.length} voice${mine.length === 1 ? '' : 's'}`;
+        pill.text(`Connected · ${count}${where}${custom ? ` (${custom} custom)` : ''}`).addClass('tv-ok');
+        if (quiet) continue;
+        if (mine.length) toastr.success(`${label} key works. ${count} available.`, 'TavernVoice');
+        else toastr.warning(`${label} key works, but no voices were found${where}. Check the voice languages.`, 'TavernVoice');
+    }
+    renderVoicePickers();
 }
 
 async function loadMicDevices() {
@@ -1277,7 +1363,8 @@ async function refreshSettingsCharacter() {
     const cfg = await getCharVoice(c.characterId);
     const name = $('<span>').text(c.characters[c.characterId].name).html();
     const v = resolveVoice(cfg);
-    box.html(`<b>${name}</b>: calls <b class="${cfg.enabled ? 'tv-ok' : 'tv-bad'}">${cfg.enabled ? 'ON' : 'OFF'}</b> · voice <code>${v.voice}</code> · ${v.language}
+    const voice = $('<span>').text(`${voiceName(v.voice)} (${PROVIDERS[parseVoice(v.voice).provider]})`).html();
+    box.html(`<b>${name}</b>: calls <b class="${cfg.enabled ? 'tv-ok' : 'tv-bad'}">${cfg.enabled ? 'ON' : 'OFF'}</b> · voice <code>${voice}</code> · ${$('<span>').text(v.language).html()}
         <div class="menu_button menu_button_icon tv-open-char"><i class="fa-solid fa-phone"></i><span>Character voice settings</span></div>`);
 }
 
@@ -1314,6 +1401,8 @@ function bindSettings() {
     const s = settings();
     const root = $('#tavern_voice_settings');
 
+    $('#tv_eleven_model').html(ELEVEN_MODELS.map(([id, label]) => `<option value="${id}">${label}</option>`).join(''));
+    if (!ELEVEN_MODELS.some(([id]) => id === s.elevenModel)) $('#tv_eleven_model').append(`<option value="${$('<span>').text(s.elevenModel).html()}">${$('<span>').text(s.elevenModel).html()}</option>`);
     root.find('[data-tv]').each((_, el) => {
         const key = el.dataset.tv;
         if (el.type === 'checkbox') el.checked = !!s[key];
@@ -1348,7 +1437,11 @@ function bindSettings() {
         if (call && key === 'helperTags') call.applyPrompt(false);
         if (key === 'prettifyTags' && !call) ctx().reloadCurrentChat();
         if (key === 'helperBridgeUrl' || key === 'helperBridgeToken') loadHelperModels();
+        if (key === 'elevenModel') renderVoicePickers();
     });
+    // Text fields save on every keystroke; their voices reload once the field is left.
+    root.on('change', '[data-tv=elevenKey], [data-tv=elevenBase]', () => loadVoices({ quiet: true, providers: ['elevenlabs'] }));
+    root.on('change', '[data-tv=heygenKey], [data-tv=heygenBase], [data-tv=heygenLanguages]', () => loadVoices({ quiet: true, providers: ['heygen'] }));
 
     $('#tv_helper_refresh').on('click', () => loadHelperModels(true));
     $('#tv_helper_filter').on('input', () => renderHelperModels());
@@ -1362,7 +1455,8 @@ function bindSettings() {
     });
     loadHelperModels();
 
-    $('#tv_test_key').on('click', () => loadVoices());
+    $('#tv_test_key').on('click', () => loadVoices({ providers: ['xai'] }));
+    root.on('click', '.tv-test-provider', (e) => loadVoices({ providers: [e.currentTarget.dataset.provider] }));
     $('#tv_use_st_key').on('click', async () => {
         stSecretCache = undefined;
         const key = await readStSecret();
@@ -1371,13 +1465,13 @@ function bindSettings() {
             $('#tv_api_key').val(key);
             saveSettings();
             toastr.success('Imported the xAI key saved in SillyTavern.', 'TavernVoice');
-            loadVoices({ quiet: true });
+            loadVoices({ quiet: true, providers: ['xai'] });
         } else {
             toastr.warning('Could not read it. Save an xAI key under API Connections and set allowKeysExposure: true in config.yaml, or paste the key here.', 'TavernVoice');
         }
     });
-    $('#tv_toggle_key').on('click', () => {
-        const input = $('#tv_api_key');
+    root.on('click', '.tv-toggle-key', (e) => {
+        const input = $(`#${e.currentTarget.dataset.for}`);
         input.attr('type', input.attr('type') === 'password' ? 'text' : 'password');
     });
     // Voice lab: play any voice with your own line; the play button doubles as stop.
@@ -1390,7 +1484,7 @@ function bindSettings() {
         getAudioContext();
         oneShot.setVolume(s.volume);
         const text = String(s.labText || '').trim() || DEFAULTS.labText;
-        oneShot.enqueue((signal) => client.tts({ text, voice: labVoice, language: s.language, speed: s.speed, signal }), { text });
+        oneShot.enqueue((signal) => router.tts({ text, voice: labVoice, language: s.language, speed: s.speed, signal }), { text });
         labPlaying(true);
     });
     $('#tv_lab_voice').on('change', async (e) => {
@@ -1402,8 +1496,7 @@ function bindSettings() {
         s.defaultVoice = labVoice;
         saveSettings();
         renderVoicePickers();
-        const name = voiceList.find(v => v.voice_id === labVoice)?.name ?? labVoice;
-        toastr.success(`${name} is now the default voice.`, 'TavernVoice');
+        toastr.success(`${voiceName(labVoice)} is now the default voice.`, 'TavernVoice');
     });
     $('#tv_refresh_mics').on('click', async () => {
         try {
@@ -1460,7 +1553,7 @@ function registerSlashCommands() {
             return '';
         },
         unnamedArgumentList: [SlashCommandArgument.fromProps({ description: 'text to speak', typeList: [ARGUMENT_TYPE.STRING], isRequired: true })],
-        helpString: 'Speak text with the current character\'s Grok voice. Speech tags like [laugh] and <whisper>…</whisper> work.',
+        helpString: 'Speak text with the current character\'s voice. Speech tags like [laugh] and <whisper>…</whisper> work with Grok and ElevenLabs v3/v4 voices.',
     }));
 }
 
@@ -1506,7 +1599,7 @@ jQuery(async () => {
     $('#tv_char_button').on('click', () => openCharacterPopup(ctx().characterId));
 
     // Replay-with-voice button on every message.
-    $('#message_template .mes_buttons .extraMesButtons').prepend('<div title="Play with Grok voice" class="mes_button tv_mes_play fa-solid fa-phone-volume" data-i18n="[title]Play with Grok voice"></div>');
+    $('#message_template .mes_buttons .extraMesButtons').prepend('<div title="Play with the call voice" class="mes_button tv_mes_play fa-solid fa-phone-volume" data-i18n="[title]Play with the call voice"></div>');
     $(document).on('click', '.tv_mes_play', function () {
         const id = Number($(this).closest('.mes').attr('mesid'));
         const msg = ctx().chat[id];
@@ -1539,7 +1632,9 @@ jQuery(async () => {
     registerSlashCommands();
     registerTagFormatter();
     refreshAll();
-    if (settings().apiKey) loadVoices({ quiet: true });
+    const s = settings();
+    const keyed = Object.entries({ xai: s.apiKey, elevenlabs: s.elevenKey, heygen: s.heygenKey }).filter(([, k]) => k?.trim()).map(([p]) => p);
+    if (keyed.length) loadVoices({ quiet: true, providers: keyed });
 
     // Small debugging surface for the browser console.
     globalThis.TavernVoice = {
