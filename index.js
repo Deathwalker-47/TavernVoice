@@ -6,8 +6,9 @@ import { XaiClient, SttStream } from './src/xai.js';
 import { getAudioContext, MicInput, SpeechPlayer, Sounds } from './src/audio.js';
 import { encodeWav } from './src/dsp.js';
 import { SpeechTurn, captionHtml, decorateTagsHtml, isSpeakable, toSpeechText } from './src/text.js';
-import { DEFAULT_CALL_PROMPT, PREVIOUS_CALL_PROMPTS, buildCallPrompt, parseCallees } from './src/prompt.js';
+import { DEFAULT_CALL_PROMPT, PREVIOUS_CALL_PROMPTS, buildCallPrompt } from './src/prompt.js';
 import { CallUI } from './src/ui.js';
+import { ASK, castOf, mergeCast, voiceFor, whoAnswers } from './src/cast.js';
 
 const ctx = () => SillyTavern.getContext();
 const TAG = '[TavernVoice]';
@@ -48,7 +49,7 @@ const DEFAULTS = Object.freeze({
     helperFirstMs: 1500,      // longest wait for the first sentence's tags before speaking it plain
 });
 
-const CHAR_DEFAULTS = Object.freeze({ enabled: false, voice: '', language: '', speed: '', notes: '', callees: '' });
+const CHAR_DEFAULTS = Object.freeze({ enabled: false, voice: '', language: '', speed: '', notes: '', callees: '', cast: [], answers: ASK });
 
 function settings() {
     const all = ctx().extensionSettings;
@@ -268,15 +269,17 @@ const words = (s) => String(s).toLowerCase().replace(/<[^>]+>|\[[^\]]+\]/g, ' ')
 let call = null;
 
 class CallSession {
-    constructor(chid, charCfg, callee = '') {
+    constructor(chid, charCfg, person = null) {
         const c = ctx();
         this.s = settings();
         this.chid = chid;
         this.chatId = c.getCurrentChatId();
         this.char = c.characters[chid];
-        this.callee = callee;               // a person on a card with several, or '' for the card itself
-        this.name = callee || this.char.name;
-        this.voice = resolveVoice(charCfg);
+        this.person = person;               // someone on a story card, or null for the card itself
+        this.callee = person?.name || '';
+        this.name = this.callee || this.char.name;
+        this.cast = castOf(charCfg).map(p => p.name);
+        this.voice = resolveVoice(voiceFor(charCfg, person));
         this.inputMode = this.s.inputMode;
 
         this.player = new SpeechPlayer();
@@ -368,7 +371,7 @@ class CallSession {
         if (s.sttMode !== 'batch') this.connectStream();
 
         this.applyPrompt(s.greet);
-        if (s.logCalls) await logMarker(`📞 {{user}} started a voice call with {{char}}.`);
+        if (s.logCalls) await logMarker(`📞 {{user}} started a voice call with ${this.name}.`);
         this.#acquireWakeLock();
         this.#loop();
 
@@ -451,7 +454,10 @@ class CallSession {
         }
         // With the voice director on, the main LLM writes plain dialogue and the helper adds tags.
         const promptTags = s.helperTags ? 'none' : s.tagLevel;
-        const text = buildCallPrompt({ template: s.promptTemplate, tagLevel: promptTags, voiceNotes: this.voice.notes, greeting, callee: this.callee });
+        const text = buildCallPrompt({
+            template: s.promptTemplate, tagLevel: promptTags, voiceNotes: this.voice.notes, greeting,
+            callee: this.callee, about: this.person?.about || '', others: this.callee ? this.cast : [],
+        });
         // position 1 = IN_CHAT, role 0 = SYSTEM
         ctx().setExtensionPrompt(PROMPT_KEY, text, 1, Number(s.promptDepth) || 0, false, 0);
     }
@@ -589,7 +595,7 @@ class CallSession {
     }
 
     keyterms() {
-        return [...new Set([this.name, this.char.name, ctx().name1])].filter(Boolean);
+        return [...new Set([this.name, this.char.name, ctx().name1, ...this.cast])].filter(Boolean);
     }
 
     onMicFrame({ pcm, level }) {
@@ -820,24 +826,25 @@ class CallSession {
 const mediaStudio = () => (typeof globalThis.MediaStudio?.generateLast === 'function' ? globalThis.MediaStudio : null);
 
 /**
- * On a card with several people, who answers: '' for the card itself, the one name listed,
- * or a choice when there are more. null when the choice was cancelled.
+ * Who picks up, from the card's "Who answers calls" setting: { person } for someone in the
+ * story, {} for the card itself, or null when the user cancelled the choice.
  */
 async function pickCallee(cfg, cardName) {
-    const names = parseCallees(cfg.callees);
-    if (names.length < 2) return names[0] || '';
+    const pick = whoAnswers(cfg);
+    if (!pick.ask) return pick;
+    const cast = castOf(cfg);
     const c = ctx();
     const esc = (t) => $('<span>').text(t).html();
     const $el = $(`<div class="tv-char-popup"><h3><i class="fa-solid fa-phone"></i> Call someone in ${esc(cardName)}</h3>
-        <select class="text_pole">${names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')}</select></div>`);
-    const last = c.chatMetadata?.tavern_voice_callee;
-    if (names.includes(last)) $el.find('select').val(last);
+        <select class="text_pole">${cast.map((p, i) => `<option value="${i}">${esc(p.name)}</option>`).join('')}</select></div>`);
+    const last = cast.findIndex(p => p.name === c.chatMetadata?.tavern_voice_callee);
+    if (last >= 0) $el.find('select').val(String(last));
     const ok = await c.callGenericPopup($el, c.POPUP_TYPE.CONFIRM, '', { okButton: 'Call', cancelButton: 'Cancel' });
     if (ok !== c.POPUP_RESULT.AFFIRMATIVE) return null;
-    const chosen = String($el.find('select').val() || names[0]);
-    c.chatMetadata.tavern_voice_callee = chosen;
+    const person = cast[Number($el.find('select').val())] ?? cast[0];
+    c.chatMetadata.tavern_voice_callee = person.name;
     c.saveMetadataDebounced?.();
-    return chosen;
+    return { person };
 }
 
 const INSECURE_PAGE_MESSAGE = 'Your browser blocks the microphone because this page is not HTTPS. Open SillyTavern through an https:// address (reverse proxy, Tailscale or Cloudflare Tunnel) or via localhost.';
@@ -872,9 +879,9 @@ async function startCall() {
         toastr.warning('SillyTavern is not connected to an LLM API, so the character can\'t answer.', 'TavernVoice');
         return;
     }
-    const callee = await pickCallee(cfg, name);
-    if (callee === null) return;
-    call = new CallSession(c.characterId, cfg, callee);
+    const picked = await pickCallee(cfg, name);
+    if (!picked) return;
+    call = new CallSession(c.characterId, cfg, picked.person ?? null);
     refreshCallButton();
     try {
         await call.start();
@@ -891,10 +898,10 @@ async function startCall() {
 
 const oneShot = new SpeechPlayer();
 
-async function speakOnce(rawText, chid) {
+async function speakOnce(rawText, chid, person = null) {
     getAudioContext();
     oneShot.stop();
-    const cfg = resolveVoice(await getCharVoice(chid));
+    const cfg = resolveVoice(voiceFor(await getCharVoice(chid), person));
     const s = settings();
     oneShot.setVolume(s.volume);
     const turn = new SpeechTurn({
@@ -910,7 +917,7 @@ async function speakOnce(rawText, chid) {
         toastr.info('Nothing to say in that message.', 'TavernVoice');
         return;
     }
-    const name = ctx().characters[chid]?.name ?? '';
+    const name = person?.name || (ctx().characters[chid]?.name ?? '');
     for (const chunk of chunks) {
         oneShot.enqueue(async (signal) => {
             const text = s.helperTags ? await helperTag(chunk, { char: name, timeoutMs: 8000 }) : chunk;
@@ -982,13 +989,13 @@ async function refreshCharButton() {
 }
 
 /** Voice <option>s grouped by source: the team's custom voices, xAI's built-ins, then anything typed in. */
-function voiceOptionsHtml(selected, { withDefault = false } = {}) {
+function voiceOptionsHtml(selected, { withDefault = false, defaultLabel = '' } = {}) {
     const esc = (t) => $('<span>').text(t).html();
     const option = (v) => {
         const desc = v.description || FALLBACK_VOICES.find(f => f.voice_id === v.voice_id)?.description;
         return `<option value="${esc(v.voice_id)}" ${v.voice_id === selected ? 'selected' : ''}>${esc(v.name)}${desc ? ` — ${esc(desc)}` : ''}</option>`;
     };
-    const opts = withDefault ? [`<option value="">Default (${esc(settings().defaultVoice)})</option>`] : [];
+    const opts = withDefault ? [`<option value="">${esc(defaultLabel || `Default (${settings().defaultVoice})`)}</option>`] : [];
     const custom = voiceList.filter(v => v.custom);
     if (custom.length) opts.push(`<optgroup label="Your custom voices">${custom.map(option).join('')}</optgroup>`);
     opts.push(`<optgroup label="xAI voices">${voiceList.filter(v => !v.custom).map(option).join('')}</optgroup>`);
@@ -1018,6 +1025,139 @@ function languageOptionsHtml(selected, { withDefault = false } = {}) {
     return opts.join('');
 }
 
+/** Lorebook entries for a card: its embedded book, then the world it links to. */
+async function cardLore(ch) {
+    const entries = [...(ch.data?.character_book?.entries ?? [])];
+    const world = ch.data?.extensions?.world;
+    if (world && typeof ctx().loadWorldInfo === 'function') {
+        try {
+            entries.push(...Object.values((await ctx().loadWorldInfo(world))?.entries ?? {}));
+        } catch { /* a missing lorebook just means less to read */ }
+    }
+    return entries.filter(e => e?.content && !e.disable && e.enabled !== false)
+        .map(e => `${[].concat(e.keys ?? e.key ?? []).join(', ')}: ${e.content}`).join('\n');
+}
+
+/** Asks the bridge helper who is in the card, and adds them to the list. */
+async function findCast(ch, current) {
+    const c = ctx();
+    const sub = (t) => c.substituteParams(String(t ?? ''), undefined, ch.name);
+    const card = {
+        name: ch.name, description: sub(ch.description), personality: sub(ch.personality), scenario: sub(ch.scenario),
+        first_mes: sub(ch.first_mes), mes_example: sub(ch.mes_example), lore: sub(await cardLore(ch)),
+    };
+    const voices = voiceList.map(v => ({
+        voice_id: v.voice_id, name: v.name, gender: v.gender || '',
+        description: v.description || FALLBACK_VOICES.find(f => f.voice_id === v.voice_id)?.description || '',
+    }));
+    const res = await fetch(`${helperBase()}/helper/cast`, {
+        method: 'POST',
+        headers: helperHeaders(),
+        body: JSON.stringify({ card, user: c.name1, voices, model: settings().helperModel || undefined }),
+    });
+    if (!res.ok) throw new Error(res.status === 404 ? 'This bridge is too old for this. Update it.' : `The bridge answered ${res.status}`);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    return { cast: mergeCast(current, data.people), found: (data.people ?? []).length };
+}
+
+/** The "People in this story" part of the character popup: who answers, and each person's voice and brief. */
+function bindCastEditor($el, chid, ch, cfg) {
+    const esc = (t) => $('<span>').text(t).html();
+    const $list = $el.find('.tv-cast-list');
+    let cast = castOf(cfg);
+    const voiceName = (id) => (id ? voiceList.find(v => v.voice_id === id)?.name ?? id : 'card\'s voice');
+
+    const save = (patch = {}) => setCharVoice(chid, { cast, callees: '', ...patch });
+
+    function renderAnswers() {
+        const options = [[ASK, cast.length > 1 ? 'Ask me each time I call' : (cast[0]?.name || 'Ask me')], ['', `${ch.name} (the card itself)`],
+            ...(cast.length > 1 ? cast.map(p => [p.name, p.name]) : [])];
+        const current = String(cfg.answers ?? ASK);
+        const known = options.some(([v]) => v.toLowerCase() === current.toLowerCase());
+        $el.find('[name=answers]').html(options.map(([v, label]) => `<option value="${esc(v)}">${esc(label)}</option>`).join(''))
+            .val(known ? options.find(([v]) => v.toLowerCase() === current.toLowerCase())[0] : ASK);
+        $el.find('.tv-answers-row').toggle(cast.length > 0);
+    }
+
+    function render(openIndex = -1) {
+        $list.html(cast.map((p, i) => `
+            <details class="tv-person" data-i="${i}"${i === openIndex ? ' open' : ''}>
+                <summary><b class="tv-person-name">${esc(p.name || 'New person')}</b> <small class="tv-person-voice">${esc(voiceName(p.voice))}</small></summary>
+                <label class="tv-notes">Name<input data-f="name" class="text_pole" type="text"></label>
+                <label class="tv-notes">Voice<select data-f="voice" class="text_pole">${voiceOptionsHtml(p.voice, { withDefault: true, defaultLabel: 'Same as the card' })}</select></label>
+                <label class="tv-notes">Who they are <small>(the AI plays them from this on their calls)</small><textarea data-f="about" class="text_pole" rows="3"></textarea></label>
+                <label class="tv-notes">How they sound <small>(optional)</small><input data-f="notes" class="text_pole" type="text" placeholder="e.g. older, slow and gravelly"></label>
+                <div class="tv-popup-actions">
+                    <div class="menu_button tv-person-preview"><i class="fa-solid fa-play"></i> Preview</div>
+                    <div class="menu_button tv-person-remove"><i class="fa-solid fa-trash"></i> Remove</div>
+                </div>
+            </details>`).join(''));
+        $list.find('.tv-person').each((i, node) => {
+            for (const f of ['name', 'about', 'notes']) $(node).find(`[data-f=${f}]`).val(cast[i][f]);
+        });
+        renderAnswers();
+    }
+
+    const indexOf = (target) => Number($(target).closest('.tv-person').attr('data-i'));
+
+    $list.on('input', '[data-f=name]', (e) => {
+        const i = indexOf(e.target);
+        const value = e.target.value;
+        if (cfg.answers && cfg.answers === cast[i].name) cfg.answers = value; // a rename keeps them as the one who answers
+        cast[i].name = value;
+        $(e.target).closest('.tv-person').find('.tv-person-name').text(value || 'New person');
+    });
+    $list.on('change', '[data-f]', async (e) => {
+        const i = indexOf(e.target);
+        const f = e.target.dataset.f;
+        let { value } = e.target;
+        if (f === 'voice' && value === CUSTOM_VOICE) {
+            value = (await askCustomVoice(cast[i].voice)) || cast[i].voice;
+            $(e.target).html(voiceOptionsHtml(value, { withDefault: true, defaultLabel: 'Same as the card' }));
+        }
+        cast[i][f] = f === 'name' ? value.trim() : value;
+        if (f === 'voice') $(e.target).closest('.tv-person').find('.tv-person-voice').text(voiceName(value));
+        if (f === 'name') renderAnswers();
+        await save({ answers: cfg.answers });
+    });
+    $list.on('click', '.tv-person-remove', async (e) => {
+        const i = indexOf(e.target);
+        if (cfg.answers === cast[i].name) cfg.answers = ASK;
+        cast.splice(i, 1);
+        render();
+        await save({ answers: cfg.answers });
+    });
+    $list.on('click', '.tv-person-preview', (e) => {
+        const p = cast[indexOf(e.target)];
+        if (!p?.name) return toastr.info('Give them a name first.', 'TavernVoice');
+        speakOnce(`Hey, it's ${p.name}. [laugh] It's really nice to finally hear your voice!`, chid, p);
+    });
+    $el.find('.tv-cast-add').on('click', () => {
+        cast.push({ name: '', voice: '', about: '', notes: '' });
+        render(cast.length - 1);
+        $list.find('.tv-person').last().find('[data-f=name]').trigger('focus');
+    });
+    $el.find('.tv-cast-find').on('click', async function () {
+        const $btn = $(this);
+        if ($btn.hasClass('disabled')) return;
+        $btn.addClass('disabled').find('i').attr('class', 'fa-solid fa-spinner fa-spin');
+        try {
+            const result = await findCast(ch, cast);
+            const added = result.cast.length - castOf({ cast }).length;
+            cast = result.cast;
+            render();
+            await save({ answers: cfg.answers });
+            toastr.success(result.found ? `Found ${result.found} ${result.found === 1 ? 'person' : 'people'}${added ? `, ${added} new` : ''}. Check their voices and tap Preview.` : 'Found nobody to add.', 'TavernVoice');
+        } catch (err) {
+            toastr.error(`Could not read the card: ${err?.message ?? err}. The voice director's bridge (Extensions → TavernVoice) does this.`, 'TavernVoice');
+        } finally {
+            $btn.removeClass('disabled').find('i').attr('class', 'fa-solid fa-wand-magic-sparkles');
+        }
+    });
+    render();
+}
+
 async function openCharacterPopup(chid) {
     const c = ctx();
     const ch = c.characters[chid];
@@ -1033,9 +1173,16 @@ async function openCharacterPopup(chid) {
                 <label>Language<select name="language" class="text_pole">${languageOptionsHtml(cfg.language, { withDefault: true })}</select></label>
                 <label>Speed<select name="speed" class="text_pole">${speeds.map(v => `<option value="${v}" ${String(cfg.speed) === v ? 'selected' : ''}>${v ? `${v}×` : `Default (${settings().speed}×)`}</option>`).join('')}</select></label>
             </div>
-            <label class="tv-notes">Who answers <small>(cards with several people: their names, comma separated. You pick one when you call. Empty = the card itself)</small>
-                <input name="callees" class="text_pole" type="text" placeholder="e.g. Nimya, Mahira">
-            </label>
+            <div class="tv-cast">
+                <b>People in this story</b>
+                <small class="tv-hint">For cards with several characters (an RPG, a household, a group). Each person can have their own voice, and the AI plays only the one you call.</small>
+                <label class="tv-notes tv-answers-row">Who answers calls<select name="answers" class="text_pole"></select></label>
+                <div class="tv-cast-list"></div>
+                <div class="tv-popup-actions">
+                    <div class="menu_button tv-cast-find" title="Reads the card and lorebook and picks a voice for each person"><i class="fa-solid fa-wand-magic-sparkles"></i> Find people in this card</div>
+                    <div class="menu_button tv-cast-add"><i class="fa-solid fa-user-plus"></i> Add person</div>
+                </div>
+            </div>
             <label class="tv-notes">How they sound on the phone <small>(optional, given to the AI during calls)</small>
                 <textarea name="notes" class="text_pole" rows="2" placeholder="e.g. talks fast when excited, giggles a lot, soft and sleepy at night"></textarea>
             </label>
@@ -1046,10 +1193,12 @@ async function openCharacterPopup(chid) {
         </div>`);
     $el.find('[name=enabled]').prop('checked', !!cfg.enabled);
     $el.find('[name=notes]').val(cfg.notes);
-    $el.find('[name=callees]').val(cfg.callees);
+    bindCastEditor($el, chid, ch, cfg);
     $el.on('change', 'input, select, textarea', async (e) => {
         const { name, type, checked } = e.target;
+        if (!name) return; // the people list saves itself
         let { value } = e.target;
+        if (name === 'answers') cfg.answers = value;
         if (name === 'voice' && value === CUSTOM_VOICE) {
             value = await askCustomVoice(cfg.voice);
             if (!value) value = cfg.voice;
