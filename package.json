@@ -1,7 +1,7 @@
 {
   "name": "sillytavern-tavernvoice",
   "version": "0.1.0",
-  "description": "SillyTavern extension: real-time voice calls with your character: xAI Grok STT, and Grok, ElevenLabs or HeyGen voices.",
+  "description": "SillyTavern extension: real-time voice calls with your character: xAI Grok STT, and Grok, ElevenLabs, HeyGen or Cartesia voices.",
   "type": "module",
   "private": true,
   "scripts": {

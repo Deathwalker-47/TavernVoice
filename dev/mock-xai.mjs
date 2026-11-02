@@ -1,9 +1,9 @@
-// Local stand-in for api.x.ai, ElevenLabs and HeyGen, so the full call loop can be tested without keys.
+// Local stand-in for api.x.ai, ElevenLabs, HeyGen and Cartesia, so the full call loop can be tested without keys.
 //
 //   node dev/mock-xai.mjs            (listens on http://localhost:8787)
 //
-// In TavernVoice settings set "xAI API base URL" to http://localhost:8787/v1, the ElevenLabs and
-// HeyGen base URLs to http://localhost:8787, and any API keys.
+// In TavernVoice settings set "xAI API base URL" to http://localhost:8787/v1, the ElevenLabs,
+// HeyGen and Cartesia base URLs to http://localhost:8787, and any API keys.
 // It also serves an OpenAI-compatible streaming chat endpoint, so SillyTavern can use
 // Chat Completion -> Custom (OpenAI-compatible) -> http://localhost:8787/v1 as the "LLM".
 
@@ -153,6 +153,22 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/mock/audio/')) {
         const text = heygenAudio.get(Number(url.pathname.match(/(\d+)\.wav$/)?.[1])) ?? '';
         return res.writeHead(200, { 'Content-Type': 'audio/wav' }).end(fakeSpeechWav(text));
+    }
+    // Cartesia
+    if (url.pathname === '/tts/bytes' && req.method === 'POST') {
+        const json = JSON.parse(body.toString() || '{}');
+        const key = String(req.headers.authorization ?? '').startsWith('Bearer ') ? 'key ok' : 'NO KEY';
+        console.log(`[${stamp}] Cartesia TTS (${key}, version ${req.headers['cartesia-version'] ?? '-'}) voice=${json.voice?.id} model=${json.model_id} lang=${json.language ?? '-'} speed=${json.generation_config?.speed ?? 1}: ${json.transcript}`);
+        return res.writeHead(200, { 'Content-Type': 'audio/wav' }).end(fakeSpeechWav(json.transcript ?? ''));
+    }
+    if (url.pathname === '/voices') {
+        return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
+            data: [
+                { id: 'mock-cartesia-1', name: 'Priya', description: 'Warm and bright', language: 'ml', gender: 'feminine', is_owner: false },
+                { id: 'mock-cartesia-2', name: 'My Clone', description: 'Cloned voice', language: 'en', gender: 'masculine', is_owner: true },
+            ],
+            has_more: false,
+        }));
     }
     if (url.pathname === '/v1/realtime/client_secrets') {
         console.log(`[${stamp}] client_secrets requested -> 404 (mock forces batch fallback)`);

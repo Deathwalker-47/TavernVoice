@@ -1,12 +1,15 @@
-// Static data about the voice providers: xAI Grok (voices and listening), ElevenLabs and HeyGen (voices).
+// Static data about the voice providers: xAI Grok (voices and listening), ElevenLabs, HeyGen and Cartesia (voices).
 // Sources: https://docs.x.ai/developers/model-capabilities/audio/text-to-speech (Oct 2026),
-// https://elevenlabs.io/docs/models and https://developers.heygen.com/docs/voices/speech (Nov 2026)
+// https://elevenlabs.io/docs/models, https://developers.heygen.com/docs/voices/speech and
+// https://docs.cartesia.ai/build-with-cartesia/tts-models (Nov 2026)
 
 export const EXTENSION_KEY = 'tavern_voice';          // extension_settings key + character card field
 export const PROMPT_KEY = 'TAVERN_VOICE_CALL';          // setExtensionPrompt key
 export const DEFAULT_API_BASE = 'https://api.x.ai/v1';
 export const DEFAULT_ELEVEN_BASE = 'https://api.elevenlabs.io';
 export const DEFAULT_HEYGEN_BASE = 'https://api.heygen.com';
+export const DEFAULT_CARTESIA_BASE = 'https://api.cartesia.ai';
+export const CARTESIA_VERSION = '2026-08-14';         // the Cartesia-Version header every request needs
 export const STT_MODEL = 'grok-voice-transcribe-2.0';
 
 /** ElevenLabs models worth using on a call, fastest and most expressive first. */
@@ -17,6 +20,18 @@ export const ELEVEN_MODELS = [
     ['eleven_multilingual_v2', 'Multilingual v2: steady, 29 languages, no voice tags'],
     ['eleven_v4', 'Eleven v4: most expressive, too slow for calls'],
 ];
+
+/** Cartesia models. Each name points at the newest snapshot of that version. */
+export const CARTESIA_MODELS = [
+    ['sonic-3.6', 'Sonic 3.6: fastest and newest, 44 languages incl. Malayalam'],
+    ['sonic-3.5', 'Sonic 3.5: the previous version'],
+    ['sonic-3', 'Sonic 3: the first with 40+ languages'],
+];
+
+/** Languages Cartesia's Sonic 3 models speak. Any Cartesia voice can speak any of them. */
+export const CARTESIA_LANGUAGES = new Set(['en', 'fr', 'de', 'es', 'pt', 'it', 'nl', 'pl', 'ru', 'sv', 'tr', 'tl', 'bg', 'ro', 'cs',
+    'el', 'fi', 'hr', 'sk', 'da', 'hu', 'no', 'uk', 'zh', 'ja', 'ko', 'vi', 'th', 'id', 'ms', 'ar', 'he', 'ka', 'hi', 'ta', 'bn', 'te',
+    'gu', 'kn', 'ml', 'mr', 'pa', 'or', 'ur']);
 
 /** Inline tags: dropped at a point in the text, e.g. "No way! [laugh] Really?" */
 export const INLINE_TAGS = {
@@ -135,7 +150,7 @@ export const LANGUAGES = [
     ['es-MX', 'Spanish (Mexico)'], ['es-ES', 'Spanish (Spain)'], ['tr', 'Turkish'], ['vi', 'Vietnamese'],
 ];
 
-/** Spoken by ElevenLabs and HeyGen voices but not by Grok's, which read them with auto-detect. */
+/** Spoken by ElevenLabs, HeyGen and Cartesia voices but not by Grok's, which read them with auto-detect. */
 export const MORE_LANGUAGES = [
     ['ml', 'Malayalam'], ['ta', 'Tamil'], ['te', 'Telugu'], ['kn', 'Kannada'], ['mr', 'Marathi'],
     ['gu', 'Gujarati'], ['pa', 'Punjabi'], ['ur', 'Urdu'],

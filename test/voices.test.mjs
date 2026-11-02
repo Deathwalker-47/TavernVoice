@@ -4,6 +4,7 @@ import { renderTags } from '../src/text.js';
 import { VoiceRouter, parseVoice, voiceRef } from '../src/voices.js';
 import { ElevenLabsClient } from '../src/elevenlabs.js';
 import { HeyGenClient } from '../src/heygen.js';
+import { CartesiaClient } from '../src/cartesia.js';
 import { XaiClient } from '../src/xai.js';
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status });
@@ -13,6 +14,7 @@ test('voice ids: unprefixed is xAI, others carry their provider', () => {
     assert.deepEqual(parseVoice('xai:ara'), { provider: 'xai', id: 'ara' });
     assert.deepEqual(parseVoice('elevenlabs:21m00Tcm4TlvDq8ikWAM'), { provider: 'elevenlabs', id: '21m00Tcm4TlvDq8ikWAM' });
     assert.deepEqual(parseVoice('heygen:abc:def'), { provider: 'heygen', id: 'abc:def' });
+    assert.deepEqual(parseVoice('cartesia:6ccbfb76-1fc6-48f7-b71d-91ac6298247b'), { provider: 'cartesia', id: '6ccbfb76-1fc6-48f7-b71d-91ac6298247b' });
     assert.equal(voiceRef('xai', 'eve'), 'eve');
     assert.equal(voiceRef('heygen', 'abc'), 'heygen:abc');
 });
@@ -60,7 +62,76 @@ test('router: each provider gets the text in the form it reads', async () => {
     assert.equal(calls[1].language, 'ml');
     assert.equal(calls[1].speed, 1.1);
     assert.equal(router.tagStyle('heygen:h1'), 'plain');
+    assert.equal(router.tagStyle('cartesia:c1'), 'plain');
     assert.equal(router.tagStyle('eve'), 'grok');
+});
+
+test('router: Cartesia voices get plain speech', async () => {
+    const calls = [];
+    const clients = { cartesia: { tts: async (o) => { calls.push(o); return new ArrayBuffer(1); } } };
+    await new VoiceRouter(clients).tts({ text: 'Oh [laugh] <whisper>hi</whisper> [pause] there', voice: 'cartesia:c1', language: 'ml' });
+    assert.deepEqual(calls.map(c => [c.voice, c.text, c.language]), [['c1', 'Oh hi… there', 'ml']]);
+});
+
+test('Cartesia: TTS request, language only when Cartesia speaks it, speed clamped', async () => {
+    const calls = [];
+    globalThis.fetch = async (url, init) => {
+        calls.push({ url, init });
+        return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+    };
+    let model = '';
+    const client = new CartesiaClient(async () => ({ key: 'sk_car_test', base: 'https://api.cartesia.ai/', model }));
+    const buf = await client.tts({ text: 'നമസ്കാരം', voice: 'v-1', language: 'ml', speed: 2 });
+    assert.equal(buf.byteLength, 3);
+    assert.equal(calls[0].url, 'https://api.cartesia.ai/tts/bytes');
+    assert.equal(calls[0].init.headers.Authorization, 'Bearer sk_car_test');
+    assert.equal(calls[0].init.headers['Cartesia-Version'], '2026-08-14');
+    assert.deepEqual(JSON.parse(calls[0].init.body), {
+        model_id: 'sonic-3.6', transcript: 'നമസ്കാരം', voice: { id: 'v-1' },
+        output_format: { container: 'mp3', sample_rate: 44100, bit_rate: 128000 },
+        language: 'ml', generation_config: { speed: 1.5 },
+    });
+    model = 'sonic-3';
+    await client.tts({ text: 'Hola', voice: 'v-1', language: 'es-MX', speed: 1 });
+    await client.tts({ text: 'Hi', voice: 'v-1', language: 'auto' });
+    await client.tts({ text: 'Hej', voice: 'v-1', language: 'is' });       // Icelandic: not one of Cartesia's
+    const bodies = calls.slice(1).map(c => JSON.parse(c.init.body));
+    assert.deepEqual(bodies.map(b => [b.model_id, b.language, b.generation_config]), [
+        ['sonic-3', 'es', undefined], ['sonic-3', undefined, undefined], ['sonic-3', undefined, undefined],
+    ]);
+});
+
+test('Cartesia: readable errors and a clear message without a key', async () => {
+    globalThis.fetch = async () => json({ error: 'Invalid API key' }, 401);
+    const client = new CartesiaClient(async () => ({ key: 'sk_bad' }));
+    await assert.rejects(client.tts({ text: 'x', voice: 'v' }), (err) => err.status === 401 && err.message === 'Cartesia 401: Invalid API key');
+    await assert.rejects(new CartesiaClient(async () => ({ key: '' })).voices(), /No Cartesia API key/);
+});
+
+test('Cartesia: voices page through the library, your own first', async () => {
+    const urls = [];
+    globalThis.fetch = async (url, init) => {
+        urls.push(url);
+        assert.equal(init.headers['Cartesia-Version'], '2026-08-14');
+        return url.includes('starting_after')
+            ? json({ data: [{ id: 'c3', name: 'Mine', description: 'Cloned from a sample', language: 'ml', gender: 'feminine', is_owner: true }], has_more: false })
+            : json({
+                data: [
+                    { id: 'c1', name: 'Priya', tagline: 'Warm narrator', description: 'long text', language: 'hi', accents: [{ locale: 'ta-IN' }], gender: 'feminine', is_owner: false },
+                    { id: 'c2', name: 'Arjun', description: 'Calm', gender: 'masculine' },
+                ],
+                has_more: true, next_page: 'c2',
+            });
+    };
+    const voices = await new CartesiaClient(async () => ({ key: 'k' })).voices();
+    assert.equal(urls.length, 2);
+    assert.equal(urls[0], 'https://api.cartesia.ai/voices?limit=100');
+    assert.match(urls[1], /starting_after=c2/);
+    assert.deepEqual(voices, [
+        { voice_id: 'c3', name: 'Mine', description: 'Cloned from a sample', gender: 'female', language: 'Malayalam', custom: true },
+        { voice_id: 'c1', name: 'Priya', description: 'Warm narrator', gender: 'female', language: 'Hindi, Tamil', custom: false },
+        { voice_id: 'c2', name: 'Arjun', description: 'Calm', gender: 'male', language: '', custom: false },
+    ]);
 });
 
 test('router: a sound-only chunk is skipped quietly for a voice without tags', async () => {

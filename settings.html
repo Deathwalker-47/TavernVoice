@@ -8,7 +8,7 @@
 
             <div id="tv_insecure" class="tv-warning displayNone"></div>
             <h4>Voice providers</h4>
-            <small class="tv-hint">xAI Grok hears you on every call and has its own voices. ElevenLabs and HeyGen add more voices and languages, such as Malayalam. Keys are stored in your SillyTavern settings and sent only to each provider, straight from this browser.</small>
+            <small class="tv-hint">xAI Grok hears you on every call and has its own voices. ElevenLabs, HeyGen and Cartesia add more voices and languages, such as Malayalam. Keys are stored in your SillyTavern settings and sent only to each provider, straight from this browser.</small>
 
             <div class="tv-provider">
                 <b>xAI Grok</b> <small id="tv_status" class="tv-status-pill">Not checked</small>
@@ -51,6 +51,20 @@
                 <small class="tv-hint">HeyGen voices speak without voice tags, so the AI is told to write plain speech for them.</small>
             </div>
 
+            <div class="tv-provider">
+                <b>Cartesia</b> <small id="tv_status_cartesia" class="tv-status-pill">No key</small>
+                <label for="tv_cartesia_key">API key <small>(optional)</small></label>
+                <div class="flex-container flexnowrap">
+                    <input id="tv_cartesia_key" data-tv="cartesiaKey" type="password" class="text_pole flex1" placeholder="sk_car_…" autocomplete="off">
+                    <div class="menu_button fa-solid fa-eye tv-toggle-key" data-for="tv_cartesia_key" title="Show/hide key"></div>
+                    <div class="menu_button fa-solid fa-plug-circle-check tv-test-provider" data-provider="cartesia" title="Test key &amp; load voices"></div>
+                </div>
+                <label>Model
+                    <select id="tv_cartesia_model" data-tv="cartesiaModel" class="text_pole"></select>
+                </label>
+                <small class="tv-hint">Lists your own Cartesia voices first, then its public library. Any Cartesia voice can speak any of its 44 languages, Malayalam included. They speak without voice tags, so the AI is told to write plain speech for them.</small>
+            </div>
+
             <hr>
             <h4>Current character</h4>
             <div id="tv_current_char" class="tv-current-char"></div>
@@ -70,7 +84,7 @@
             </label>
 
             <h4>Voice lab</h4>
-            <small class="tv-hint">Try any voice without changing your settings. The list is every voice your keys can use, grouped by provider; custom voices from your xAI team appear under "Your custom voices" (xAI offers voice cloning in the US only). For Malayalam, pick an ElevenLabs or HeyGen voice and set Language to Malayalam.</small>
+            <small class="tv-hint">Try any voice without changing your settings. The list is every voice your keys can use, grouped by provider; custom voices from your xAI team appear under "Your custom voices" (xAI offers voice cloning in the US only). For Malayalam, pick an ElevenLabs, HeyGen or Cartesia voice and set Language to Malayalam.</small>
             <div class="flex-container flexnowrap">
                 <select id="tv_lab_voice" class="text_pole flex1"></select>
                 <div id="tv_lab_play" class="menu_button fa-solid fa-play" title="Play this voice"></div>
@@ -180,6 +194,9 @@
             </label>
             <label>HeyGen API base URL
                 <input type="text" data-tv="heygenBase" class="text_pole" placeholder="https://api.heygen.com">
+            </label>
+            <label>Cartesia API base URL
+                <input type="text" data-tv="cartesiaBase" class="text_pole" placeholder="https://api.cartesia.ai">
             </label>
             <label class="checkbox_label"><input type="checkbox" data-tv="debug"> Debug logging in the browser console</label>
             <small class="tv-hint">Slash commands: <code>/voicecall</code>, <code>/hangup</code>, <code>/voicesay text</code>.</small>
