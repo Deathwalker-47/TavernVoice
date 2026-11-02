@@ -67,7 +67,24 @@ export function parseCallees(text) {
  * @param {string} [o.about] Who the callee is, so a story card's narrator can play just them
  * @param {string[]} [o.others] The story's other people, who are not on the call
  */
-export function buildCallPrompt({ template, tagLevel, voiceNotes = '', greeting = false, callee = '', about = '', others = [] }) {
+/** "ml" -> "Malayalam", "pt-BR" -> "Brazilian Portuguese". */
+function languageName(code) {
+    try {
+        return new Intl.DisplayNames(['en'], { type: 'language' }).of(code) || code;
+    } catch {
+        return code;
+    }
+}
+
+/** The language the voice speaks, when it isn't English or auto. Otherwise the model answers in the chat's language. */
+function languageNote(language) {
+    const code = String(language || '').trim();
+    if (!code || code === 'auto' || /^en\b/i.test(code)) return '';
+    const name = languageName(code);
+    return `\n{{char}} speaks ${name} on this call: every spoken line is in ${name}, written the way ${name} is normally written, because the voice reads it aloud. Names stay as they are.`;
+}
+
+export function buildCallPrompt({ template, tagLevel, voiceNotes = '', greeting = false, callee = '', about = '', others = [], language = '' }) {
     const notes = voiceNotes.trim() ? `\n- How {{char}} sounds on the phone: ${voiceNotes.trim()}` : '';
     let out = (template || DEFAULT_CALL_PROMPT)
         .replace(/\{\{voice_tags\}\}/gi, voiceTagsGuide(tagLevel))
@@ -75,6 +92,7 @@ export function buildCallPrompt({ template, tagLevel, voiceNotes = '', greeting 
     if (about.trim()) out += `\n\nWho {{char}} is: ${about.trim()}`;
     const rest = others.map(n => String(n).trim()).filter(n => n && n.toLowerCase() !== callee.trim().toLowerCase());
     if (rest.length) out += `\nNot on this call: ${rest.join(', ')}. {{char}} can talk about them, but never speaks their lines or answers for them.`;
+    out += languageNote(language);
     if (greeting) out += GREETING_NOTE;
     const name = callee.trim();
     if (name) out = out.replace(/\{\{char\}\}/gi, name.replace(/\$/g, '$$$$'));

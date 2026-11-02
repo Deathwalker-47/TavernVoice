@@ -495,7 +495,7 @@ class CallSession {
         const promptTags = s.helperTags ? 'none' : this.tagLevel();
         const text = buildCallPrompt({
             template: s.promptTemplate, tagLevel: promptTags, voiceNotes: this.voice.notes, greeting,
-            callee: this.callee, about: this.person?.about || '', others: this.callee ? this.cast : [],
+            callee: this.callee, about: this.person?.about || '', others: this.callee ? this.cast : [], language: this.voice.language,
         });
         // position 1 = IN_CHAT, role 0 = SYSTEM
         ctx().setExtensionPrompt(PROMPT_KEY, text, 1, Number(s.promptDepth) || 0, false, 0);

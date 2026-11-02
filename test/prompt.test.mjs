@@ -21,6 +21,16 @@ test('without a callee the card speaks for itself', () => {
     assert.match(out, /Never mistake \{\{user\}\} for another character/);
 });
 
+test('a call in Malayalam tells the character to speak it; English and auto add nothing', () => {
+    const ml = buildCallPrompt({ template: '{{char}} here', tagLevel: 'none', callee: 'Nadia', language: 'ml' });
+    assert.match(ml, /Nadia speaks Malayalam on this call: every spoken line is in Malayalam/);
+    assert.ok(!ml.includes('{{char}}'));
+    assert.match(buildCallPrompt({ template: 'x', tagLevel: 'none', language: 'pt-BR' }), /speaks Brazilian Portuguese/);
+    for (const language of ['', 'auto', 'en', 'en-US']) {
+        assert.equal(buildCallPrompt({ template: '{{char}} here', tagLevel: 'none', language }), '{{char}} here');
+    }
+});
+
 test('a name with $ is inserted as written', () => {
     const out = buildCallPrompt({ template: '{{char}} here', tagLevel: 'none', callee: 'Ka$h' });
     assert.equal(out, 'Ka$h here');
