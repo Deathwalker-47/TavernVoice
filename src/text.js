@@ -140,6 +140,44 @@ export function toSpeechText(raw, opts = {}) {
     return t;
 }
 
+/** Grok inline tags as ElevenLabs audio tags (v3 and v4 read free-form [cues]). */
+const ELEVEN_INLINE = {
+    'pause': '[short pause]', 'long-pause': '[long pause]', 'hum-tune': '[hums]',
+    'laugh': '[laughs]', 'chuckle': '[chuckles]', 'giggle': '[giggles]', 'cry': '[crying]',
+    'tsk': '[tsks]', 'tongue-click': '[clicks tongue]', 'lip-smack': '[smacks lips]',
+    'breath': '[breathes]', 'inhale': '[inhales deeply]', 'exhale': '[exhales]', 'sigh': '[sighs]',
+};
+
+/** Grok wrapping tags as the ElevenLabs cue that starts the phrase. <emphasis> becomes capitals. */
+const ELEVEN_WRAPPING = {
+    'soft': '[softly]', 'whisper': '[whispers]', 'loud': '[shouting]',
+    'build-intensity': '[building intensity]', 'decrease-intensity': '[calming down]',
+    'higher-pitch': '[higher pitch]', 'lower-pitch': '[lower pitch]', 'slow': '[slowly]', 'fast': '[quickly]',
+    'sing-song': '[sing-song]', 'singing': '[sings]',
+};
+
+/**
+ * Rewrites Grok speech tags for the voice that will say them.
+ * 'grok' keeps them. 'eleven' spells them as ElevenLabs audio tags ("[laughs]", "[whispers] secret",
+ * then "[normally]" if the line goes on). 'plain' drops them, keeping pauses as "…".
+ * @param {string} text Output of toSpeechText / SpeechTurn
+ * @param {'grok'|'eleven'|'plain'} style
+ */
+export function renderTags(text, style = 'grok') {
+    if (style === 'grok') return text;
+    let t = String(text ?? '');
+    if (style === 'eleven') {
+        t = t.replace(/\[([a-z-]+)\]/g, (_, n) => ` ${ELEVEN_INLINE[n] ?? ''} `);
+        t = t.replace(/<emphasis>([\s\S]*?)<\/emphasis>/g, (_, inner) => inner.toUpperCase());
+        t = t.replace(/<([a-z-]+)>/g, (_, n) => ` ${ELEVEN_WRAPPING[n] ?? ''} `);
+        t = t.replace(/<\/[a-z-]+>(?=\s*[\p{L}\p{N}[])/gu, ' [normally] ');
+    } else {
+        t = t.replace(/\[(?:long-)?pause\]/g, ' … ').replace(/\[[a-z-]+\]/g, ' ');
+    }
+    t = t.replace(/<\/?[a-z-]+>/g, ' ');
+    return t.replace(/[ \t]+/g, ' ').replace(/ +([,.!?;:…])/g, '$1').trim();
+}
+
 /** True when a chunk has something audible: words, numbers or an inline sound tag. */
 export function isSpeakable(chunk) {
     const withoutTags = chunk.replace(/<\/?[a-z-]+>/g, '');

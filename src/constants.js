@@ -1,10 +1,22 @@
-// Static data about the xAI Grok voice stack.
-// Source: https://docs.x.ai/developers/model-capabilities/audio/text-to-speech (Oct 2026)
+// Static data about the voice providers: xAI Grok (voices and listening), ElevenLabs and HeyGen (voices).
+// Sources: https://docs.x.ai/developers/model-capabilities/audio/text-to-speech (Oct 2026),
+// https://elevenlabs.io/docs/models and https://developers.heygen.com/docs/voices/speech (Nov 2026)
 
 export const EXTENSION_KEY = 'tavern_voice';          // extension_settings key + character card field
 export const PROMPT_KEY = 'TAVERN_VOICE_CALL';          // setExtensionPrompt key
 export const DEFAULT_API_BASE = 'https://api.x.ai/v1';
+export const DEFAULT_ELEVEN_BASE = 'https://api.elevenlabs.io';
+export const DEFAULT_HEYGEN_BASE = 'https://api.heygen.com';
 export const STT_MODEL = 'grok-voice-transcribe-2.0';
+
+/** ElevenLabs models worth using on a call, fastest and most expressive first. */
+export const ELEVEN_MODELS = [
+    ['eleven_v4_turbo', 'Eleven v4 Turbo: fast, voice tags, 90+ languages incl. Malayalam'],
+    ['eleven_v3_conversational', 'Eleven v3 Conversational: fast, voice tags, 70+ languages incl. Malayalam'],
+    ['eleven_flash_v2_5', 'Flash v2.5: fastest and cheapest, 32 languages, no voice tags'],
+    ['eleven_multilingual_v2', 'Multilingual v2: steady, 29 languages, no voice tags'],
+    ['eleven_v4', 'Eleven v4: most expressive, too slow for calls'],
+];
 
 /** Inline tags: dropped at a point in the text, e.g. "No way! [laugh] Really?" */
 export const INLINE_TAGS = {
@@ -122,3 +134,14 @@ export const LANGUAGES = [
     ['ko', 'Korean'], ['pt-BR', 'Portuguese (Brazil)'], ['pt-PT', 'Portuguese (Portugal)'], ['ru', 'Russian'],
     ['es-MX', 'Spanish (Mexico)'], ['es-ES', 'Spanish (Spain)'], ['tr', 'Turkish'], ['vi', 'Vietnamese'],
 ];
+
+/** Spoken by ElevenLabs and HeyGen voices but not by Grok's, which read them with auto-detect. */
+export const MORE_LANGUAGES = [
+    ['ml', 'Malayalam'], ['ta', 'Tamil'], ['te', 'Telugu'], ['kn', 'Kannada'], ['mr', 'Marathi'],
+    ['gu', 'Gujarati'], ['pa', 'Punjabi'], ['ur', 'Urdu'],
+];
+
+/** Languages Grok STT can be told to expect. Anything else is left to its auto-detect. */
+export const STT_LANGUAGES = new Set(['ar', 'bg', 'bs', 'ca', 'cs', 'da', 'de', 'el', 'en', 'es', 'fa', 'fi', 'fil', 'fr',
+    'hi', 'hr', 'hu', 'id', 'it', 'ja', 'ko', 'mk', 'ms', 'nb', 'nl', 'pl', 'pt', 'ro', 'ru', 'sk', 'sv', 'th', 'tr',
+    'uk', 'ur', 'vi', 'yue', 'zh']);
