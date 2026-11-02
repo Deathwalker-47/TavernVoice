@@ -6,7 +6,7 @@ import { XaiClient, SttStream } from './src/xai.js';
 import { getAudioContext, MicInput, SpeechPlayer, Sounds } from './src/audio.js';
 import { encodeWav } from './src/dsp.js';
 import { SpeechTurn, captionHtml, decorateTagsHtml, isSpeakable, toSpeechText } from './src/text.js';
-import { DEFAULT_CALL_PROMPT, buildCallPrompt } from './src/prompt.js';
+import { DEFAULT_CALL_PROMPT, PREVIOUS_CALL_PROMPTS, buildCallPrompt, parseCallees } from './src/prompt.js';
 import { CallUI } from './src/ui.js';
 
 const ctx = () => SillyTavern.getContext();
@@ -48,7 +48,7 @@ const DEFAULTS = Object.freeze({
     helperFirstMs: 1500,      // longest wait for the first sentence's tags before speaking it plain
 });
 
-const CHAR_DEFAULTS = Object.freeze({ enabled: false, voice: '', language: '', speed: '', notes: '' });
+const CHAR_DEFAULTS = Object.freeze({ enabled: false, voice: '', language: '', speed: '', notes: '', callees: '' });
 
 function settings() {
     const all = ctx().extensionSettings;
@@ -56,6 +56,7 @@ function settings() {
     const s = all[EXTENSION_KEY];
     for (const [k, v] of Object.entries(DEFAULTS)) if (s[k] === undefined) s[k] = v;
     if (s.helperModel === 'gemini-2.5-flash-lite') s.helperModel = DEFAULTS.helperModel; // old default filters adult lines
+    if (PREVIOUS_CALL_PROMPTS.includes(s.promptTemplate)) s.promptTemplate = DEFAULT_CALL_PROMPT; // never edited: take the new one
     return s;
 }
 
@@ -120,12 +121,14 @@ function lastUserLine() {
 
 /**
  * Asks the bridge helper to add speech tags to one sentence. Never throws and never
- * delays past timeoutMs: on any problem the sentence is spoken as it was.
+ * delays past timeoutMs, or past `until` when given: on any problem the sentence is
+ * spoken as it was.
  */
-async function helperTag(text, { char = '', context = '', timeoutMs = 1500 } = {}) {
+async function helperTag(text, { char = '', context = '', timeoutMs = 1500, until = null } = {}) {
     const s = settings();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    until?.then(() => controller.abort());
     try {
         const res = await fetch(`${helperBase()}/helper/voice-tags`, {
             method: 'POST',
@@ -265,13 +268,14 @@ const words = (s) => String(s).toLowerCase().replace(/<[^>]+>|\[[^\]]+\]/g, ' ')
 let call = null;
 
 class CallSession {
-    constructor(chid, charCfg) {
+    constructor(chid, charCfg, callee = '') {
         const c = ctx();
         this.s = settings();
         this.chid = chid;
         this.chatId = c.getCurrentChatId();
         this.char = c.characters[chid];
-        this.name = this.char.name;
+        this.callee = callee;               // a person on a card with several, or '' for the card itself
+        this.name = callee || this.char.name;
         this.voice = resolveVoice(charCfg);
         this.inputMode = this.s.inputMode;
 
@@ -309,6 +313,7 @@ class CallSession {
             avatarUrl: c.getThumbnailUrl('avatar', this.char.avatar),
             inputMode: this.inputMode,
             captions: s.captions,
+            media: !!mediaStudio(),
         });
         this.#bindUi();
         this.setPhase('ringing');
@@ -416,6 +421,7 @@ class CallSession {
         this.player.stop();
         this.mic.stop();
         this.stt?.close();
+        this.offMedia?.();
         c.setExtensionPrompt(PROMPT_KEY, '', 1, 0);
         this.wakeLock?.release().catch(() => {});
 
@@ -445,13 +451,13 @@ class CallSession {
         }
         // With the voice director on, the main LLM writes plain dialogue and the helper adds tags.
         const promptTags = s.helperTags ? 'none' : s.tagLevel;
-        const text = buildCallPrompt({ template: s.promptTemplate, tagLevel: promptTags, voiceNotes: this.voice.notes, greeting });
+        const text = buildCallPrompt({ template: s.promptTemplate, tagLevel: promptTags, voiceNotes: this.voice.notes, greeting, callee: this.callee });
         // position 1 = IN_CHAT, role 0 = SYSTEM
         ctx().setExtensionPrompt(PROMPT_KEY, text, 1, Number(s.promptDepth) || 0, false, 0);
     }
 
     speechOpts() {
-        return { mode: this.s.speakMode, actionSounds: this.s.actionSounds, tagLevel: this.s.tagLevel, charName: this.name };
+        return { mode: this.s.speakMode, actionSounds: this.s.actionSounds, tagLevel: this.s.tagLevel, charName: this.char.name };
     }
 
     // --- the character talking ------------------------------------------
@@ -524,12 +530,14 @@ class CallSession {
         for (const text of chunks) {
             log('speak:', text);
             const meta = { text };
-            // Only the first sentence's tags are on the critical path; later ones are
-            // tagged while earlier sentences play (the player prefetches ahead).
-            const budget = (this.turnChunks++ || 0) === 0 ? Number(this.s.helperFirstMs) || 1500 : 8000;
-            this.player.enqueue(async (signal) => {
+            // The first sentence waits for its tags up to helperFirstMs. Later ones are tagged
+            // while earlier sentences play, and are spoken plain if the tags aren't back by
+            // the time they're needed, so the voice never pauses for them.
+            const first = (this.turnChunks++ || 0) === 0;
+            const budget = first ? Number(this.s.helperFirstMs) || 1500 : 8000;
+            this.player.enqueue(async (signal, needed) => {
                 const spoken = this.s.helperTags
-                    ? await helperTag(text, { char: this.name, context: lastUserLine(), timeoutMs: budget })
+                    ? await helperTag(text, { char: this.name, context: lastUserLine(), timeoutMs: budget, until: first ? null : needed })
                     : text;
                 meta.text = spoken; // the caption shows what the voice actually gets
                 return client.tts({ text: spoken, voice, language, speed, signal });
@@ -581,7 +589,7 @@ class CallSession {
     }
 
     keyterms() {
-        return [this.name, ctx().name1].filter(Boolean);
+        return [...new Set([this.name, this.char.name, ctx().name1])].filter(Boolean);
     }
 
     onMicFrame({ pcm, level }) {
@@ -733,6 +741,20 @@ class CallSession {
         this.ui.addEventListener('pttdown', () => this.mic.pttDown());
         this.ui.addEventListener('pttup', () => this.mic.pttUp());
         this.ui.addEventListener('send', (e) => this.handleUtterance(e.detail.text, { voice: false }));
+        // Photos and videos while on the call: the chat is behind this window, so they show here.
+        this.ui.addEventListener('media', (e) => mediaStudio()?.generateLast(e.detail.kind));
+        const shown = (e) => {
+            if (e.detail?.chatId === this.chatId) this.ui.showMedia(e.detail);
+        };
+        const status = (e) => {
+            if (e.detail?.chatId === this.chatId) this.ui.setMediaStatus(e.detail.text);
+        };
+        document.addEventListener('mediastudio:attached', shown);
+        document.addEventListener('mediastudio:status', status);
+        this.offMedia = () => {
+            document.removeEventListener('mediastudio:attached', shown);
+            document.removeEventListener('mediastudio:status', status);
+        };
     }
 
     setMuted(muted) {
@@ -794,6 +816,30 @@ class CallSession {
     }
 }
 
+/** Media Studio's API, when that extension is installed. */
+const mediaStudio = () => (typeof globalThis.MediaStudio?.generateLast === 'function' ? globalThis.MediaStudio : null);
+
+/**
+ * On a card with several people, who answers: '' for the card itself, the one name listed,
+ * or a choice when there are more. null when the choice was cancelled.
+ */
+async function pickCallee(cfg, cardName) {
+    const names = parseCallees(cfg.callees);
+    if (names.length < 2) return names[0] || '';
+    const c = ctx();
+    const esc = (t) => $('<span>').text(t).html();
+    const $el = $(`<div class="tv-char-popup"><h3><i class="fa-solid fa-phone"></i> Call someone in ${esc(cardName)}</h3>
+        <select class="text_pole">${names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')}</select></div>`);
+    const last = c.chatMetadata?.tavern_voice_callee;
+    if (names.includes(last)) $el.find('select').val(last);
+    const ok = await c.callGenericPopup($el, c.POPUP_TYPE.CONFIRM, '', { okButton: 'Call', cancelButton: 'Cancel' });
+    if (ok !== c.POPUP_RESULT.AFFIRMATIVE) return null;
+    const chosen = String($el.find('select').val() || names[0]);
+    c.chatMetadata.tavern_voice_callee = chosen;
+    c.saveMetadataDebounced?.();
+    return chosen;
+}
+
 const INSECURE_PAGE_MESSAGE = 'Your browser blocks the microphone because this page is not HTTPS. Open SillyTavern through an https:// address (reverse proxy, Tailscale or Cloudflare Tunnel) or via localhost.';
 
 async function startCall() {
@@ -826,7 +872,9 @@ async function startCall() {
         toastr.warning('SillyTavern is not connected to an LLM API, so the character can\'t answer.', 'TavernVoice');
         return;
     }
-    call = new CallSession(c.characterId, cfg);
+    const callee = await pickCallee(cfg, name);
+    if (callee === null) return;
+    call = new CallSession(c.characterId, cfg, callee);
     refreshCallButton();
     try {
         await call.start();
@@ -985,6 +1033,9 @@ async function openCharacterPopup(chid) {
                 <label>Language<select name="language" class="text_pole">${languageOptionsHtml(cfg.language, { withDefault: true })}</select></label>
                 <label>Speed<select name="speed" class="text_pole">${speeds.map(v => `<option value="${v}" ${String(cfg.speed) === v ? 'selected' : ''}>${v ? `${v}×` : `Default (${settings().speed}×)`}</option>`).join('')}</select></label>
             </div>
+            <label class="tv-notes">Who answers <small>(cards with several people: their names, comma separated. You pick one when you call. Empty = the card itself)</small>
+                <input name="callees" class="text_pole" type="text" placeholder="e.g. Nimya, Mahira">
+            </label>
             <label class="tv-notes">How they sound on the phone <small>(optional, given to the AI during calls)</small>
                 <textarea name="notes" class="text_pole" rows="2" placeholder="e.g. talks fast when excited, giggles a lot, soft and sleepy at night"></textarea>
             </label>
@@ -995,6 +1046,7 @@ async function openCharacterPopup(chid) {
         </div>`);
     $el.find('[name=enabled]').prop('checked', !!cfg.enabled);
     $el.find('[name=notes]').val(cfg.notes);
+    $el.find('[name=callees]').val(cfg.callees);
     $el.on('change', 'input, select, textarea', async (e) => {
         const { name, type, checked } = e.target;
         let { value } = e.target;

@@ -25,10 +25,10 @@ export function formatDuration(sec) {
 }
 
 /**
- * Events: hangup, mute, speaker, mode, pttdown, pttup, send {text}
+ * Events: hangup, mute, speaker, mode, pttdown, pttup, send {text}, media {kind}
  */
 export class CallUI extends EventTarget {
-    mount({ name, avatarUrl, inputMode = 'open', captions = true }) {
+    mount({ name, avatarUrl, inputMode = 'open', captions = true, media = false }) {
         this.name = name;
         this.inputMode = inputMode;
         const root = document.createElement('div');
@@ -55,6 +55,12 @@ export class CallUI extends EventTarget {
                     <div class="tv-cap tv-cap-ai"></div>
                     <div class="tv-cap tv-cap-user"></div>
                 </div>
+                <div class="tv-media-status tv-empty"></div>
+                <div class="tv-media tv-empty"></div>
+            </div>
+            <div class="tv-media-bar"${media ? '' : ' hidden'}>
+                <button type="button" class="tv-pill tv-send-photo" title="Ask for a photo of this moment"><i class="fa-solid fa-image"></i> Photo</button>
+                <button type="button" class="tv-pill tv-send-video" title="Ask for a video of this moment"><i class="fa-solid fa-film"></i> Video</button>
             </div>
             <div class="tv-controls">
                 <button type="button" class="tv-btn tv-mic" title="Mute microphone"><i class="fa-solid fa-microphone"></i></button>
@@ -102,6 +108,16 @@ export class CallUI extends EventTarget {
             if (open) this.$('.tv-type input').focus();
         });
         this.$('.tv-min').addEventListener('click', () => this.root.classList.toggle('tv-minimized'));
+        this.$('.tv-send-photo').addEventListener('click', () => this.#emit('media', { kind: 'image' }));
+        this.$('.tv-send-video').addEventListener('click', () => this.#emit('media', { kind: 'video' }));
+        this.$('.tv-media').addEventListener('click', (e) => {
+            if (e.target.closest('.tv-media-close')) {
+                this.$('.tv-media').classList.add('tv-empty');
+                this.$('.tv-media').replaceChildren();
+            } else if (e.target.tagName === 'IMG') {
+                this.root.classList.toggle('tv-media-big');
+            }
+        });
         this.$('.tv-type').addEventListener('submit', (e) => {
             e.preventDefault();
             const input = this.$('.tv-type input');
@@ -186,6 +202,32 @@ export class CallUI extends EventTarget {
         const el = this.$('.tv-cap-user');
         el.textContent = text;
         el.classList.toggle('tv-interim', interim);
+        el.classList.toggle('tv-empty', !text);
+    }
+
+    /** A photo or video that arrived during the call; the chat behind the window can't show it. */
+    showMedia({ url, type }) {
+        if (!this.root || !url) return;
+        const box = this.$('.tv-media');
+        const media = document.createElement(type === 'video' ? 'video' : 'img');
+        media.src = url;
+        if (type === 'video') Object.assign(media, { controls: true, loop: true, playsInline: true, muted: true, autoplay: true });
+        else media.alt = '';
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'tv-icon tv-media-close';
+        close.title = 'Hide';
+        close.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+        box.replaceChildren(media, close);
+        box.classList.remove('tv-empty');
+        if (this.root.classList.contains('tv-minimized')) this.root.classList.remove('tv-minimized');
+    }
+
+    /** "Photo: Rendering on NanoGPT…" while media is being made, '' when done. */
+    setMediaStatus(text) {
+        if (!this.root) return;
+        const el = this.$('.tv-media-status');
+        el.textContent = text || '';
         el.classList.toggle('tv-empty', !text);
     }
 

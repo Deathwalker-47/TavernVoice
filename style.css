@@ -305,6 +305,75 @@
     text-underline-offset: 3px;
 }
 
+.tv-media-status {
+    margin-top: 6px;
+    font-size: 0.8em;
+    opacity: 0.75;
+    text-align: center;
+}
+
+.tv-media {
+    position: relative;
+    width: 100%;
+    margin-top: 6px;
+}
+
+.tv-media-status.tv-empty,
+.tv-media.tv-empty {
+    display: none;
+}
+
+.tv-media img,
+.tv-media video {
+    display: block;
+    width: 100%;
+    max-height: 34vh;
+    object-fit: contain;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.35);
+    cursor: zoom-in;
+}
+
+.tv-media-big .tv-media img,
+.tv-media-big .tv-media video {
+    max-height: 70vh;
+    cursor: zoom-out;
+}
+
+.tv-media-close {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    background: rgba(0, 0, 0, 0.55);
+    border-radius: 50%;
+}
+
+.tv-media-bar {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    padding: 0 12px;
+}
+
+.tv-media-bar[hidden],
+.tv-minimized .tv-media-bar {
+    display: none;
+}
+
+.tv-pill {
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.15));
+    background: rgba(127, 127, 127, 0.14);
+    color: inherit;
+    border-radius: 999px;
+    padding: 5px 12px;
+    font-size: 0.85em;
+    cursor: pointer;
+}
+
+.tv-pill:hover {
+    background: rgba(127, 127, 127, 0.28);
+}
+
 .tv-controls {
     display: flex;
     justify-content: space-around;
@@ -544,4 +613,10 @@
 
 .tv-popup-actions small {
     opacity: 0.6;
+}
+
+/* With a photo or video showing, the avatar shrinks so the window still fits a phone. */
+.tv-call:has(.tv-media:not(.tv-empty)) .tv-avatar-wrap {
+    width: 48px;
+    height: 48px;
 }

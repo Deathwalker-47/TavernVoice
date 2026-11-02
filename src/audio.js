@@ -173,6 +173,9 @@ export class MicInput extends EventTarget {
  * Events: chunkstart {meta}, chunkend {meta}, idle, error {error}, stopped
  */
 export class SpeechPlayer extends EventTarget {
+    /** Roughly how long Grok TTS takes to return a sentence. */
+    static SYNTH_LEAD_MS = 1200;
+
     constructor({ prefetch = 3 } = {}) {
         super();
         this.prefetch = prefetch;
@@ -216,20 +219,38 @@ export class SpeechPlayer extends EventTarget {
     }
 
     /**
-     * @param {(signal: AbortSignal) => Promise<ArrayBuffer>} fetchAudio
+     * @param {(signal: AbortSignal, needed: Promise<void>) => Promise<ArrayBuffer>} fetchAudio
+     *        `needed` resolves when this chunk's audio must start being made so it plays without
+     *        a gap: optional extras (voice tags) should give up then.
      * @param {any} meta Passed back on chunkstart/chunkend (e.g. the text for captions)
      */
     enqueue(fetchAudio, meta) {
         this.#graph();
-        this.items.push({ fetchAudio, meta, controller: new AbortController(), promise: null });
+        let resolveNeeded;
+        const needed = new Promise(r => { resolveNeeded = r; });
+        this.items.push({ fetchAudio, meta, controller: new AbortController(), promise: null, needed, resolveNeeded, armed: false });
+        this.#arm();
         this.#prefetchAhead();
         this.#pump();
+    }
+
+    /**
+     * The next chunk is needed when the one playing is about to end, less the time speech
+     * synthesis takes. With nothing playing it is needed now.
+     */
+    #arm() {
+        const next = this.items[0];
+        if (!next || next.armed) return;
+        next.armed = true;
+        const left = this.current ? (this.playEndsAt - Date.now()) - SpeechPlayer.SYNTH_LEAD_MS : 0;
+        if (left > 0) setTimeout(next.resolveNeeded, left);
+        else next.resolveNeeded();
     }
 
     #prefetchAhead() {
         for (const item of this.items.slice(0, this.prefetch)) {
             if (item.promise) continue;
-            item.promise = item.fetchAudio(item.controller.signal)
+            item.promise = item.fetchAudio(item.controller.signal, item.needed)
                 .then(buf => this.ctx.decodeAudioData(buf))
                 .catch(err => {
                     item.error = err;
@@ -244,6 +265,7 @@ export class SpeechPlayer extends EventTarget {
         const myGen = this.gen;
         while (this.items.length && myGen === this.gen) {
             const item = this.items[0];
+            this.#arm();
             this.#prefetchAhead();
             const audio = await item.promise;
             if (myGen !== this.gen) break;
@@ -277,7 +299,9 @@ export class SpeechPlayer extends EventTarget {
                 resolve();
             };
             this.current = src;
+            this.playEndsAt = Date.now() + buffer.duration * 1000;
             src.start();
+            this.#arm();
         });
     }
 
