@@ -1,13 +1,14 @@
-// TavernVoice: phone-style voice calls with your character. xAI Grok listens; Grok, ElevenLabs or HeyGen voices speak.
+// TavernVoice: phone-style voice calls with your character. xAI Grok listens; Grok, ElevenLabs, HeyGen or Cartesia voices speak.
 // Entry point loaded by SillyTavern (see manifest.json).
 
 import {
-    EXTENSION_KEY, PROMPT_KEY, DEFAULT_API_BASE, DEFAULT_ELEVEN_BASE, DEFAULT_HEYGEN_BASE,
-    ELEVEN_MODELS, FALLBACK_VOICES, LANGUAGES, MORE_LANGUAGES,
+    EXTENSION_KEY, PROMPT_KEY, DEFAULT_API_BASE, DEFAULT_ELEVEN_BASE, DEFAULT_HEYGEN_BASE, DEFAULT_CARTESIA_BASE,
+    ELEVEN_MODELS, CARTESIA_MODELS, FALLBACK_VOICES, LANGUAGES, MORE_LANGUAGES,
 } from './src/constants.js';
 import { XaiClient, SttStream } from './src/xai.js';
 import { ElevenLabsClient } from './src/elevenlabs.js';
 import { HeyGenClient } from './src/heygen.js';
+import { CartesiaClient } from './src/cartesia.js';
 import { PROVIDERS, VoiceRouter, parseVoice } from './src/voices.js';
 import { getAudioContext, MicInput, SpeechPlayer, Sounds } from './src/audio.js';
 import { encodeWav } from './src/dsp.js';
@@ -22,13 +23,16 @@ const TAG = '[TavernVoice]';
 const DEFAULTS = Object.freeze({
     apiKey: '',
     apiBase: DEFAULT_API_BASE,
-    // More voices: ElevenLabs and HeyGen speak languages Grok doesn't, such as Malayalam.
+    // More voices: ElevenLabs, HeyGen and Cartesia speak languages Grok doesn't, such as Malayalam.
     elevenKey: '',
     elevenBase: DEFAULT_ELEVEN_BASE,
     elevenModel: 'eleven_v4_turbo',
     heygenKey: '',
     heygenBase: DEFAULT_HEYGEN_BASE,
     heygenLanguages: 'Malayalam',  // HeyGen's library is huge, so only these languages are listed
+    cartesiaKey: '',
+    cartesiaBase: DEFAULT_CARTESIA_BASE,
+    cartesiaModel: 'sonic-3.6',
     defaultVoice: 'eve',
     labText: 'Hi! This is how I sound on a call. [laugh] <whisper>Pretty nice, right?</whisper>',
     language: 'en',
@@ -116,6 +120,10 @@ const router = new VoiceRouter({
         const s = settings();
         return { key: s.heygenKey?.trim(), base: s.heygenBase?.trim() };
     }),
+    cartesia: new CartesiaClient(async () => {
+        const s = settings();
+        return { key: s.cartesiaKey?.trim(), base: s.cartesiaBase?.trim(), model: s.cartesiaModel };
+    }),
 }, {
     elevenModel: () => settings().elevenModel,
     heygenLanguages: () => String(settings().heygenLanguages || '').split(',').map(l => l.trim()).filter(Boolean),
@@ -126,6 +134,7 @@ async function hasKey(provider) {
     const s = settings();
     if (provider === 'elevenlabs') return !!s.elevenKey?.trim();
     if (provider === 'heygen') return !!s.heygenKey?.trim();
+    if (provider === 'cartesia') return !!s.cartesiaKey?.trim();
     return !!(await getConfig()).key;
 }
 
@@ -1040,10 +1049,10 @@ async function refreshCharButton() {
         .attr('title', cfg?.enabled ? 'Voice calls: ON (click for voice settings)' : 'Voice calls: OFF (click to set up)');
 }
 
-/** A voice's display name; heygen:/elevenlabs: IDs are long hex strings. */
+/** A voice's display name; the other providers' IDs are long hex strings. */
 const voiceName = (ref) => voiceList.find(v => v.voice_id === ref)?.name ?? ref;
 
-/** Voice <option>s grouped by source: the xAI team's custom voices, xAI's built-ins, ElevenLabs, HeyGen, then anything typed in. */
+/** Voice <option>s grouped by source: the xAI team's custom voices, xAI's built-ins, ElevenLabs, HeyGen, Cartesia, then anything typed in. */
 function voiceOptionsHtml(selected, { withDefault = false, defaultLabel = '' } = {}) {
     const esc = (t) => $('<span>').text(t).html();
     const option = (v) => {
@@ -1058,6 +1067,7 @@ function voiceOptionsHtml(selected, { withDefault = false, defaultLabel = '' } =
         ['xAI Grok voices', v => v.provider === 'xai' && !v.custom],
         ['ElevenLabs voices', v => v.provider === 'elevenlabs'],
         ['HeyGen voices', v => v.provider === 'heygen'],
+        ['Cartesia voices', v => v.provider === 'cartesia'],
     ];
     for (const [label, test] of groups) {
         const list = voiceList.filter(test);
@@ -1073,11 +1083,11 @@ function voiceOptionsHtml(selected, { withDefault = false, defaultLabel = '' } =
 /** Ask for a voice ID that isn't in the list. Resolves to the ID, or '' if cancelled. */
 async function askCustomVoice(current) {
     const c = ctx();
-    const id = await c.callGenericPopup('Voice ID. A plain ID is an xAI voice (custom xAI voices only work with a key from the xAI team that made them). For the others write elevenlabs:<voice ID> or heygen:<voice ID>.',
+    const id = await c.callGenericPopup('Voice ID. A plain ID is an xAI voice (custom xAI voices only work with a key from the xAI team that made them). For the others write elevenlabs:<voice ID>, heygen:<voice ID> or cartesia:<voice ID>.',
         c.POPUP_TYPE.INPUT, current && current !== CUSTOM_VOICE ? current : '');
     const clean = String(id || '').trim();
-    if (clean && !/^((xai|elevenlabs|heygen):)?[\w-]{1,64}$/.test(clean)) {
-        toastr.warning('Voice IDs are letters, digits, - and _ only, after an optional elevenlabs: or heygen:.', 'TavernVoice');
+    if (clean && !/^((xai|elevenlabs|heygen|cartesia):)?[\w-]{1,64}$/.test(clean)) {
+        toastr.warning('Voice IDs are letters, digits, - and _ only, after an optional elevenlabs:, heygen: or cartesia:.', 'TavernVoice');
         return '';
     }
     return clean;
@@ -1087,7 +1097,7 @@ function languageOptionsHtml(selected, { withDefault = false } = {}) {
     const option = ([code, label]) => `<option value="${code}" ${code === selected ? 'selected' : ''}>${label}</option>`;
     const opts = withDefault ? [`<option value="">Default (${settings().language})</option>`] : [];
     opts.push(...LANGUAGES.map(option));
-    opts.push(`<optgroup label="ElevenLabs and HeyGen voices only">${MORE_LANGUAGES.map(option).join('')}</optgroup>`);
+    opts.push(`<optgroup label="ElevenLabs, HeyGen and Cartesia voices only">${MORE_LANGUAGES.map(option).join('')}</optgroup>`);
     return opts.join('');
 }
 
@@ -1301,9 +1311,9 @@ function renderVoicePickers() {
     $('#tv_lab_info').text([kind, `id ${id}`, v?.gender, v?.language, plain].filter(Boolean).join(' · '));
 }
 
-const STATUS_PILLS = { xai: '#tv_status', elevenlabs: '#tv_status_elevenlabs', heygen: '#tv_status_heygen' };
+const STATUS_PILLS = { xai: '#tv_status', elevenlabs: '#tv_status_elevenlabs', heygen: '#tv_status_heygen', cartesia: '#tv_status_cartesia' };
 
-/** Loads each provider's voices into the pickers. ElevenLabs and HeyGen are skipped until they have a key. */
+/** Loads each provider's voices into the pickers. Providers other than xAI are skipped until they have a key. */
 async function loadVoices({ quiet = false, providers = Object.keys(PROVIDERS) } = {}) {
     const wanted = [];
     for (const p of providers) {
@@ -1401,8 +1411,14 @@ function bindSettings() {
     const s = settings();
     const root = $('#tavern_voice_settings');
 
-    $('#tv_eleven_model').html(ELEVEN_MODELS.map(([id, label]) => `<option value="${id}">${label}</option>`).join(''));
-    if (!ELEVEN_MODELS.some(([id]) => id === s.elevenModel)) $('#tv_eleven_model').append(`<option value="${$('<span>').text(s.elevenModel).html()}">${$('<span>').text(s.elevenModel).html()}</option>`);
+    // A model saved by hand that isn't listed stays selectable.
+    const modelOptions = (sel, models, current) => {
+        $(sel).html(models.map(([id, label]) => `<option value="${id}">${label}</option>`).join(''));
+        const esc = $('<span>').text(current).html();
+        if (!models.some(([id]) => id === current)) $(sel).append(`<option value="${esc}">${esc}</option>`);
+    };
+    modelOptions('#tv_eleven_model', ELEVEN_MODELS, s.elevenModel);
+    modelOptions('#tv_cartesia_model', CARTESIA_MODELS, s.cartesiaModel);
     root.find('[data-tv]').each((_, el) => {
         const key = el.dataset.tv;
         if (el.type === 'checkbox') el.checked = !!s[key];
@@ -1442,6 +1458,7 @@ function bindSettings() {
     // Text fields save on every keystroke; their voices reload once the field is left.
     root.on('change', '[data-tv=elevenKey], [data-tv=elevenBase]', () => loadVoices({ quiet: true, providers: ['elevenlabs'] }));
     root.on('change', '[data-tv=heygenKey], [data-tv=heygenBase], [data-tv=heygenLanguages]', () => loadVoices({ quiet: true, providers: ['heygen'] }));
+    root.on('change', '[data-tv=cartesiaKey], [data-tv=cartesiaBase]', () => loadVoices({ quiet: true, providers: ['cartesia'] }));
 
     $('#tv_helper_refresh').on('click', () => loadHelperModels(true));
     $('#tv_helper_filter').on('input', () => renderHelperModels());
@@ -1633,7 +1650,7 @@ jQuery(async () => {
     registerTagFormatter();
     refreshAll();
     const s = settings();
-    const keyed = Object.entries({ xai: s.apiKey, elevenlabs: s.elevenKey, heygen: s.heygenKey }).filter(([, k]) => k?.trim()).map(([p]) => p);
+    const keyed = Object.entries({ xai: s.apiKey, elevenlabs: s.elevenKey, heygen: s.heygenKey, cartesia: s.cartesiaKey }).filter(([, k]) => k?.trim()).map(([p]) => p);
     if (keyed.length) loadVoices({ quiet: true, providers: keyed });
 
     // Small debugging surface for the browser console.

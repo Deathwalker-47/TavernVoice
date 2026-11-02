@@ -1,14 +1,14 @@
 // One way to speak, whoever owns the voice. A voice ID says which provider speaks it:
-// "eve" (xAI, the original unprefixed form), "elevenlabs:<id>" or "heygen:<id>".
+// "eve" (xAI, the original unprefixed form), "elevenlabs:<id>", "heygen:<id>" or "cartesia:<id>".
 
 import { renderTags } from './text.js';
 
-export const PROVIDERS = { xai: 'xAI Grok', elevenlabs: 'ElevenLabs', heygen: 'HeyGen' };
+export const PROVIDERS = { xai: 'xAI Grok', elevenlabs: 'ElevenLabs', heygen: 'HeyGen', cartesia: 'Cartesia' };
 
 /** "heygen:abc" -> {provider: 'heygen', id: 'abc'}; "eve" -> {provider: 'xai', id: 'eve'}. */
 export function parseVoice(ref) {
     const s = String(ref ?? '').trim();
-    const m = /^(xai|elevenlabs|heygen):(.+)$/.exec(s);
+    const m = /^(xai|elevenlabs|heygen|cartesia):(.+)$/.exec(s);
     return m ? { provider: m[1], id: m[2] } : { provider: 'xai', id: s };
 }
 
@@ -16,7 +16,7 @@ export const voiceRef = (provider, id) => (provider === 'xai' ? id : `${provider
 
 export class VoiceRouter {
     /**
-     * @param {{xai: object, elevenlabs: object, heygen: object}} clients Each has tts() and voices()
+     * @param {{xai: object, elevenlabs: object, heygen: object, cartesia: object}} clients Each has tts() and voices()
      * @param {object} [o]
      * @param {() => string} [o.elevenModel] The ElevenLabs model in use
      * @param {() => string[]} [o.heygenLanguages] Languages to list HeyGen voices for
@@ -31,7 +31,7 @@ export class VoiceRouter {
     tagStyle(ref) {
         const { provider } = parseVoice(ref);
         if (provider === 'elevenlabs') return /^eleven_v[34]/.test(this.elevenModel()) ? 'eleven' : 'plain';
-        return provider === 'heygen' ? 'plain' : 'grok';
+        return provider === 'heygen' || provider === 'cartesia' ? 'plain' : 'grok';
     }
 
     /**
