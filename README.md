@@ -76,6 +76,7 @@ Tips:
 | ElevenLabs model | Eleven v4 Turbo | v4 Turbo and v3 Conversational are fast enough for calls, read voice tags and speak Malayalam. Flash v2.5 and Multilingual v2 speak without tags |
 | HeyGen voice languages | `Malayalam` | HeyGen's library has thousands of voices, so only these languages (HeyGen's names, comma-separated) are listed. HeyGen voices speak without tags, so the AI is told to write plain speech for them |
 | Cartesia model | Sonic 3.6 | The fastest. Every Cartesia voice speaks all 44 of its languages, Malayalam included. Cartesia voices speak without tags, so the AI is told to write plain speech for them |
+| Cartesia voice languages | `Malayalam` | Your own Cartesia voices are always listed. Its public library has over a thousand, so only the ones Cartesia suggests for these languages (names or codes, comma-separated) are added |
 | Voice lab | — | Pick any voice, edit the test line, press ▶ (press again to stop). *Make this the default voice* copies it to Default voice. ⟳ reloads the list, e.g. after xAI adds custom voices to your team. Voice cloning is US-only at xAI |
 | Voice director | Off | Needs the Flux LoRA Bridge with a helper LLM key. Bridge URL empty = Media Studio's bridge. The first sentence waits at most *Max wait* for tags, later ones are tagged while earlier ones play |
 | Expressiveness | Full | *Subtle* keeps only laugh/sigh/pause/whisper. *None* means plain speech |

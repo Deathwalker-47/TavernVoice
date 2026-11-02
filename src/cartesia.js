@@ -55,33 +55,54 @@ export class CartesiaClient {
         return await res.arrayBuffer();
     }
 
-    /** Your own voices first, then Cartesia's public library. */
-    async voices() {
-        const { key, base } = await this.#config();
+    /** One filtered listing of GET /voices, paged. */
+    async #list(key, base, filter) {
         const out = [];
         let after = '';
-        for (let page = 0; page < 10; page++) {
-            const q = new URLSearchParams({ limit: '100' });
+        for (let page = 0; page < 5; page++) {
+            const q = new URLSearchParams({ limit: '100', ...filter });
             if (after) q.set('starting_after', after);
             const res = await fetchWithRetry(`${base}/voices?${q}`, {
                 method: 'GET',
                 headers: { Authorization: `Bearer ${key}`, 'Cartesia-Version': CARTESIA_VERSION },
             }, { label: 'Cartesia', retries: 0 });
             const data = await res.json();
-            for (const v of data?.data ?? []) {
-                const codes = [v.language, ...(v.accents ?? []).map(a => a?.locale)].filter(Boolean).map(c => String(c).split(/[-_]/)[0].toLowerCase());
-                out.push({
-                    voice_id: v.id,
-                    name: v.name || v.id,
-                    description: String(v.tagline || v.description || '').slice(0, 120),
-                    gender: GENDERS[v.gender] ?? v.gender ?? '',
-                    language: [...new Set(codes)].map(languageName).join(', '),
-                    custom: !!v.is_owner,
-                });
-            }
+            out.push(...(data?.data ?? []));
             after = data?.next_page || data?.data?.at(-1)?.id;
             if (!data?.has_more || !after) break;
         }
-        return [...out.filter(v => v.custom), ...out.filter(v => !v.custom)];
+        return out;
     }
+
+    /**
+     * Your own voices, then the public voices Cartesia suggests for each language.
+     * The public library has well over a thousand voices, so it is never listed whole.
+     * @param {string[]} languages Codes or English names, e.g. ['ml', 'Tamil']
+     */
+    async voices(languages = []) {
+        const { key, base } = await this.#config();
+        const found = new Map();
+        for (const v of await this.#list(key, base, { is_owner: 'true' })) found.set(v.id, v);
+        for (const code of languageCodes(languages)) {
+            for (const v of await this.#list(key, base, { language: code })) if (!found.has(v.id)) found.set(v.id, v);
+        }
+        return [...found.values()].map(v => {
+            const codes = [v.language, ...(v.accents ?? []).map(a => a?.locale)].filter(Boolean).map(c => String(c).split(/[-_]/)[0].toLowerCase());
+            return {
+                voice_id: v.id,
+                name: v.name || v.id,
+                description: String(v.tagline || v.description || '').slice(0, 120),
+                gender: GENDERS[v.gender] ?? v.gender ?? '',
+                language: [...new Set(codes)].map(languageName).join(', '),
+                custom: !!v.is_owner,
+            };
+        });
+    }
+}
+
+/** ['Malayalam', 'ta', 'Klingon'] -> ['ml', 'ta']: the ones Cartesia speaks, as its codes. */
+export function languageCodes(languages) {
+    const byName = new Map([...CARTESIA_LANGUAGES].map(c => [languageName(c).toLowerCase(), c]));
+    const codes = languages.map(l => String(l).trim().toLowerCase()).map(l => (CARTESIA_LANGUAGES.has(l) ? l : byName.get(l)));
+    return [...new Set(codes.filter(Boolean))];
 }
