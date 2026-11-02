@@ -44,7 +44,7 @@ const DEFAULTS = Object.freeze({
     helperTags: false,
     helperBridgeUrl: '',      // empty = Media Studio's bridge URL, else Image Generation's SD URL
     helperBridgeToken: '',
-    helperModel: 'gemini-2.5-flash-lite',
+    helperModel: 'z-ai/glm-5.3-flash-uncensored',
     helperFirstMs: 1500,      // longest wait for the first sentence's tags before speaking it plain
 });
 
@@ -55,6 +55,7 @@ function settings() {
     all[EXTENSION_KEY] ??= {};
     const s = all[EXTENSION_KEY];
     for (const [k, v] of Object.entries(DEFAULTS)) if (s[k] === undefined) s[k] = v;
+    if (s.helperModel === 'gemini-2.5-flash-lite') s.helperModel = DEFAULTS.helperModel; // old default filters adult lines
     return s;
 }
 
