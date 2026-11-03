@@ -26,8 +26,51 @@ function escapeRegex(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// A model can announce the line before saying it: in a blockquote, under a heading, or in a
+// labelled first paragraph. The label list is closed on purpose, because real dialogue opens
+// the same way with a name ("Naveen — I told you already.").
+const LEAD_QUOTE = /^\s*>[^\n]*(?:\n[ \t]*>[^\n]*)*\s*/;
+const LEAD_HEADING = /^\s*#{1,6}[ \t][^\n]*\s*/;
+const META_LABEL = /^\s*(?:call script|instructions?|in character|translation|transcript|response|summary|context|system|script|notes?|reply|scene|lines?|meta|ooc)[ \t]*(?::|-{1,2}|—|–)/i;
+const BLANK_LINE = /\n[ \t]*\n\s*/;
+const PLAIN_LINE = /^[ \t]*[^\s>]/m;
+
+/** Length of the meta block the text opens with, 0 when it opens with speech. */
+const leadMetaLength = (t) => {
+    const quote = LEAD_QUOTE.exec(t);
+    if (quote) return quote[0].length;
+    const heading = LEAD_HEADING.exec(t);
+    if (heading) return heading[0].length;
+    const blank = BLANK_LINE.exec(t);
+    if (blank && META_LABEL.test(t.slice(0, blank.index))) return blank.index + blank[0].length;
+    return 0;
+};
+
+/**
+ * Drops a block a model put in front of its reply to announce it ("> Call script — Nimya
+ * only, Malayalam.", "# Reply", "Note: ..." and a blank line), which the call would
+ * otherwise read out in the character's voice. Repeats, so a heading above a blockquote
+ * goes as well.
+ *
+ * @param {string} raw
+ * @returns {string} The reply without the block, or raw when there is nothing to drop
+ */
+export function stripPreamble(raw) {
+    let t = String(raw ?? '');
+    for (let n = leadMetaLength(t); n; n = leadMetaLength(t)) {
+        const rest = t.slice(n);
+        // Speaking a stray meta line is bad, swallowing the reply is worse: drop the block
+        // only when speech is left, and a blockquote only when an unquoted line follows.
+        if (!/\S/.test(rest)) break;
+        if (LEAD_QUOTE.test(t) && !PLAIN_LINE.test(rest)) break;
+        t = rest;
+    }
+    return t;
+}
+
 /**
  * Converts raw message text into speakable text with Grok speech tags.
+ * A block announcing the reply rather than being it (see stripPreamble) goes first.
  *
  * @param {string} raw Raw message (may be a partial, still-streaming message)
  * @param {object} [opts]
@@ -54,6 +97,11 @@ export function toSpeechText(raw, opts = {}) {
     t = t.replace(/<!--[\s\S]*?-->/g, ' ').replace(/<!--[\s\S]*$/, '');
     t = t.replace(/```[\s\S]*?```/g, ' ').replace(/```[\s\S]*$/, '');
     t = t.replace(/`([^`\n]*)`/g, '$1');
+
+    // "> Call script — Nimya only, Malayalam." announces the line, so it is not the line.
+    t = stripPreamble(t);
+    // Mid-stream that block can be all there is, with the line it announces still on its way.
+    if (!final && !t.slice(leadMetaLength(t)).trim()) t = '';
 
     // Images, links, bare URLs.
     t = t.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ');

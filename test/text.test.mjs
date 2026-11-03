@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toSpeechText, takeChunks, balanceTags, SpeechTurn, normalizeTagName, captionHtml, isSpeakable, decorateTagsHtml } from '../src/text.js';
+import { toSpeechText, stripPreamble, takeChunks, balanceTags, SpeechTurn, normalizeTagName, captionHtml, isSpeakable, decorateTagsHtml } from '../src/text.js';
 
 test('strips actions, converts audible ones to tags', () => {
     const out = toSpeechText('*laughs softly* Oh my god. *walks to the window* You actually called!');
@@ -40,6 +40,51 @@ test('streaming holds back unclosed action, tag, and think block', () => {
     assert.equal(toSpeechText('Hello. <whisp', { final: false }), 'Hello. ');
     assert.equal(toSpeechText('Hello. [lau', { final: false }), 'Hello. ');
     assert.equal(toSpeechText('<think>hmm', { final: false }), '');
+});
+
+test('a call script announcing the line is dropped instead of spoken', () => {
+    const raw = '> Call script — Nimya only, Malayalam. Naveen says he\'s leaving for office and offers to drop Ponnu at school.\n\n"Da, Ponnuye school-il nee vidikkuka? Ayyo, athu nannayirikkum..."';
+    assert.equal(toSpeechText(raw), 'Da, Ponnuye school-il nee vidikkuka? Ayyo, athu nannayirikkum…');
+});
+
+test('stripPreamble drops a leading blockquote, which is never speech', () => {
+    assert.equal(stripPreamble('> she answers sleepily\n\nMm? Who is this?'), 'Mm? Who is this?');
+    assert.equal(stripPreamble('  > Malayalam only\n  > keep it short\nVaa, irikku.'), 'Vaa, irikku.');
+});
+
+test('stripPreamble drops a markdown heading, but not a hashtag', () => {
+    assert.equal(stripPreamble('## Reply\n\nI am right here.'), 'I am right here.');
+    assert.equal(stripPreamble('#tired of waiting\n\nWhere were you?'), '#tired of waiting\n\nWhere were you?');
+});
+
+test('stripPreamble drops a labelled first paragraph, by closed vocabulary', () => {
+    assert.equal(stripPreamble('Translation: she is teasing you.\n\nEnthaanu ithu?'), 'Enthaanu ithu?');
+    assert.equal(stripPreamble('Notes -- keep it under two lines\n\nOkay, fine.'), 'Okay, fine.');
+    assert.equal(stripPreamble('OOC — she sounds sleepy\n\nMm, what?'), 'Mm, what?');
+    assert.equal(stripPreamble('Line 2 of the song goes like this\n\nLa la la.'), 'Line 2 of the song goes like this\n\nLa la la.');
+});
+
+test('stripPreamble repeats until the text opens with speech', () => {
+    assert.equal(stripPreamble('# Call script\n\n> Nimya only, Malayalam.\n\nVaa, irikku.'), 'Vaa, irikku.');
+});
+
+test('stripPreamble keeps the text when dropping would leave nothing', () => {
+    assert.equal(stripPreamble('> that is all there is'), '> that is all there is');
+    assert.equal(stripPreamble('# Reply'), '# Reply');
+    assert.equal(stripPreamble('Note: and nothing after it\n\n  '), 'Note: and nothing after it\n\n  ');
+});
+
+test('stripPreamble leaves ordinary dialogue alone', () => {
+    assert.equal(stripPreamble('Naveen — I told you already.'), 'Naveen — I told you already.');
+    assert.equal(stripPreamble('Naveen — I told you already.\n\nYou never listen to me.'), 'Naveen — I told you already.\n\nYou never listen to me.');
+    assert.equal(stripPreamble('Hey, I was just about to call you. Where are you?'), 'Hey, I was just about to call you. Where are you?');
+    assert.equal(stripPreamble('He said "fine" and walked off.\n\nSo I waited.'), 'He said "fine" and walked off.\n\nSo I waited.');
+    assert.equal(stripPreamble('I waited all evening.\n\nThen you called.\n\nAnd I forgave you.'), 'I waited all evening.\n\nThen you called.\n\nAnd I forgave you.');
+});
+
+test('streaming speaks a plain reply as it arrives, and waits out a bare preamble', () => {
+    assert.equal(toSpeechText('Note that I waited for you', { final: false }), 'Note that I waited for you');
+    assert.equal(toSpeechText('> Call script — Nimya only.', { final: false }), '');
 });
 
 test('takeChunks: short first chunk, longer later chunks, flush on final', () => {

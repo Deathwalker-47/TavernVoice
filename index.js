@@ -13,7 +13,7 @@ import { PROVIDERS, VoiceRouter, parseVoice } from './src/voices.js';
 import { getAudioContext, MicInput, SpeechPlayer, Sounds } from './src/audio.js';
 import { encodeWav } from './src/dsp.js';
 import { SpeechTurn, captionHtml, decorateTagsHtml, isSpeakable, toSpeechText } from './src/text.js';
-import { DEFAULT_CALL_PROMPT, PREVIOUS_CALL_PROMPTS, buildCallPrompt } from './src/prompt.js';
+import { DEFAULT_CALL_PROMPT, HUNG_UP_NOTE, PREVIOUS_CALL_PROMPTS, buildCallPrompt } from './src/prompt.js';
 import { CallUI } from './src/ui.js';
 import { ASK, calleeChoices, callerChoices, castOf, mergeCast, voiceFor, whoAnswers } from './src/cast.js';
 
@@ -290,6 +290,26 @@ function sendUserMessage(text, { voice = false } = {}) {
     $('#send_but').trigger('click');
 }
 
+/**
+ * Hands the prompt slot from the call to a one-off note that the call is over, then takes it back.
+ *
+ * It clears itself on the next reply, by which point the chat has a normally written message to
+ * copy instead of the call's one-liners, and on a chat change so it never follows the user
+ * somewhere else. If another call has started in the meantime that call owns the slot, so the
+ * note leaves it alone.
+ */
+function noteHungUp() {
+    const c = ctx();
+    c.setExtensionPrompt(PROMPT_KEY, HUNG_UP_NOTE, 1, 0, false, 0);
+    const done = () => {
+        c.eventSource.removeListener(c.eventTypes.MESSAGE_RECEIVED, done);
+        c.eventSource.removeListener(c.eventTypes.CHAT_CHANGED, done);
+        if (!call) c.setExtensionPrompt(PROMPT_KEY, '', 1, 0);
+    };
+    c.eventSource.once(c.eventTypes.MESSAGE_RECEIVED, done);
+    c.eventSource.once(c.eventTypes.CHAT_CHANGED, done);
+}
+
 async function logMarker(text) {
     try {
         const safe = ctx().substituteParams(text).replace(/\|/g, '\\|').replace(/\{\{/g, '{ {');
@@ -479,7 +499,10 @@ class CallSession {
         this.mic.stop();
         this.stt?.close();
         this.offMedia?.();
+        // The call prompt goes; a note that the phone is down takes the slot until the next reply.
+        // Not when the chat has already moved on, since the slot is global and would follow it.
         c.setExtensionPrompt(PROMPT_KEY, '', 1, 0);
+        if (this.connectedAt && c.getCurrentChatId() === this.chatId) noteHungUp();
         this.wakeLock?.release().catch(() => {});
 
         const seconds = this.connectedAt ? (Date.now() - this.connectedAt) / 1000 : 0;

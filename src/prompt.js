@@ -47,6 +47,15 @@ How {{char}} replies during the call:
 
 export const GREETING_NOTE = '\n\n[The call just connected: {{user}} called {{char}}. {{char}} picks up and answers the phone in character, with a short natural greeting.]';
 
+/**
+ * In place for one reply after hanging up. A call leaves behind a run of bare spoken lines and
+ * takes its own prompt with it, so the only thing left for the model to copy is the phone style,
+ * and the chat carries on in clipped one-liners long after anyone is on the phone.
+ */
+export const HUNG_UP_NOTE = '[The phone call has ended. {{char}} and {{user}} are no longer on a call, and nothing more is '
+    + 'spoken down a phone. {{char}} writes the way this chat is normally written again: narration, actions and description, '
+    + 'at the usual length, not lines of dialogue on their own.]';
+
 /** The "how to use voice tags" bullet for each expressiveness level. */
 export function voiceTagsGuide(level) {
     if (level === 'none') return '- Do not use any [bracketed] or <angle-bracket> tags.';
