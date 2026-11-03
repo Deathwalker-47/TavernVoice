@@ -1,7 +1,37 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ASK, calleeChoices, callerChoices, castOf, mergeCast, voiceFor, whoAnswers } from '../src/cast.js';
-import { DEFAULT_CALL_PROMPT, buildCallPrompt } from '../src/prompt.js';
+import { DEFAULT_CALL_PROMPT, PREVIOUS_CALL_PROMPTS, buildCallPrompt } from '../src/prompt.js';
+
+test('a call placed as someone else names the persona and sets it aside', () => {
+    const out = buildCallPrompt({
+        template: DEFAULT_CALL_PROMPT, tagLevel: 'none',
+        caller: 'Naveen', callerAbout: 'Her husband, works in town.', personaName: 'Anujith',
+    });
+    assert.match(out, /The persona in this chat describes Anujith, who is not on this call\./);
+    assert.match(out, /Every line the chat shows from Anujith is Naveen talking/,
+        'older lines still carry the persona name, and were being read as a third person');
+    assert.match(out, /never treats Anujith as a third person/);
+    assert.doesNotMatch(out, /\{\{user\}\}/, 'the caller has taken it over');
+});
+
+test('without a persona name the caller note keeps its plain wording', () => {
+    const out = buildCallPrompt({ template: DEFAULT_CALL_PROMPT, tagLevel: 'none', caller: 'Naveen' });
+    assert.match(out, /The persona described elsewhere in this chat is not on this call: the caller is Naveen\./);
+    assert.doesNotMatch(out, /third person/);
+});
+
+test('calling under the persona\'s own name needs no untangling', () => {
+    const out = buildCallPrompt({ template: DEFAULT_CALL_PROMPT, tagLevel: 'none', caller: 'Sam', personaName: ' sam ' });
+    assert.doesNotMatch(out, /third person/, 'the same name twice would only confuse it');
+});
+
+test('the call prompt rules out the heading an instruction invites', () => {
+    assert.match(DEFAULT_CALL_PROMPT, /No headings, labels, summaries or stage directions/);
+    assert.match(DEFAULT_CALL_PROMPT, /never repeat the instruction back/);
+    assert.ok(PREVIOUS_CALL_PROMPTS.some(p => p.includes('Who is on the call:') && !p.includes('No headings')),
+        'the default this replaced is kept, so an unedited template is carried forward');
+});
 
 const NADIA = { name: 'Nadia', voice: 'ara', about: 'Runs the inn.', notes: 'warm' };
 const BRAM = { name: 'Bram', voice: '', about: 'The cook.', notes: '' };

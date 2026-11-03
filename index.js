@@ -378,6 +378,7 @@ class CallSession {
 
         this.#on(et.GENERATION_STARTED, (type, _opts, dryRun) => this.onGenerationStarted(type, dryRun));
         this.#on(et.STREAM_TOKEN_RECEIVED, (text) => this.onToken(text));
+        this.#on(et.MESSAGE_SENT, (id) => this.onMessageSent(id));
         this.#on(et.MESSAGE_RECEIVED, (id, type) => this.onMessageReceived(id, type));
         this.#on(et.GENERATION_ENDED, () => this.onGenerationDone());
         this.#on(et.GENERATION_STOPPED, () => this.onGenerationStopped());
@@ -510,7 +511,7 @@ class CallSession {
         const text = buildCallPrompt({
             template: s.promptTemplate, tagLevel: promptTags, voiceNotes: this.voice.notes, greeting,
             callee: this.callee, about: this.person?.about || '', language: this.voice.language,
-            caller: this.caller?.name || '', callerAbout: this.caller?.about || '',
+            caller: this.caller?.name || '', callerAbout: this.caller?.about || '', personaName: ctx().name1 || '',
             // Named even when the card itself answered: without this the model drifts into
             // speaking as the side characters it can see in the chat.
             others: this.cast.filter(n => n.toLowerCase() !== this.name.toLowerCase()),
@@ -546,6 +547,22 @@ class CallSession {
     onToken(text) {
         if (!this.turn) return;
         this.speak(this.turn.update(String(text ?? ''), false));
+    }
+
+    /**
+     * The caller signs their own turns. SillyTavern stamps every user message with the persona's
+     * name, so a call placed as someone else showed one name in the chat while the prompt gave
+     * another, and the character started answering the persona as a third person in the room.
+     * MESSAGE_SENT lands after the row exists and before it is drawn or sent to the model, so this
+     * is the last point where both can be put right at once.
+     */
+    onMessageSent(id) {
+        const c = ctx();
+        const msg = c.chat[id];
+        if (!this.caller || !msg?.is_user || msg.name === this.caller.name) return;
+        msg.name = this.caller.name;
+        const card = c.characters.find(ch => ch.name === this.caller.name);
+        if (card?.avatar) msg.force_avatar = c.getThumbnailUrl('avatar', card.avatar);
     }
 
     onMessageReceived(id, type) {

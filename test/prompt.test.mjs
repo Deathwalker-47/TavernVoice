@@ -36,8 +36,13 @@ test('a name with $ is inserted as written', () => {
     assert.equal(out, 'Ka$h here');
 });
 
-test('the old default is recognised so untouched settings move to the new one', () => {
-    assert.equal(PREVIOUS_CALL_PROMPTS.length, 1);
-    assert.notEqual(PREVIOUS_CALL_PROMPTS[0], DEFAULT_CALL_PROMPT);
-    assert.match(PREVIOUS_CALL_PROMPTS[0], /^\[Live voice call\]/);
+test('every earlier default is recognised so untouched settings move to the new one', () => {
+    // Counting them only breaks the next time the default is reworded. What has to hold is that
+    // each entry is a real former default and none has drifted into matching the current one,
+    // which would make the swap a no-op and strand everyone who never edited the template.
+    assert.ok(PREVIOUS_CALL_PROMPTS.length >= 1);
+    for (const old of PREVIOUS_CALL_PROMPTS) {
+        assert.notEqual(old, DEFAULT_CALL_PROMPT);
+        assert.match(old, /^\[Live voice call\]/);
+    }
 });
