@@ -15,7 +15,7 @@ import { encodeWav } from './src/dsp.js';
 import { SpeechTurn, captionHtml, decorateTagsHtml, isSpeakable, toSpeechText } from './src/text.js';
 import { DEFAULT_CALL_PROMPT, PREVIOUS_CALL_PROMPTS, buildCallPrompt } from './src/prompt.js';
 import { CallUI } from './src/ui.js';
-import { ASK, castOf, mergeCast, voiceFor, whoAnswers } from './src/cast.js';
+import { ASK, calleeChoices, castOf, mergeCast, voiceFor, whoAnswers } from './src/cast.js';
 
 const ctx = () => SillyTavern.getContext();
 const TAG = '[TavernVoice]';
@@ -506,7 +506,10 @@ class CallSession {
         const promptTags = s.helperTags ? 'none' : this.tagLevel();
         const text = buildCallPrompt({
             template: s.promptTemplate, tagLevel: promptTags, voiceNotes: this.voice.notes, greeting,
-            callee: this.callee, about: this.person?.about || '', others: this.callee ? this.cast : [], language: this.voice.language,
+            callee: this.callee, about: this.person?.about || '', language: this.voice.language,
+            // Named even when the card itself answered: without this the model drifts into
+            // speaking as the side characters it can see in the chat.
+            others: this.cast.filter(n => n.toLowerCase() !== this.name.toLowerCase()),
         });
         // position 1 = IN_CHAT, role 0 = SYSTEM
         ctx().setExtensionPrompt(PROMPT_KEY, text, 1, Number(s.promptDepth) || 0, false, 0);
@@ -881,26 +884,31 @@ class CallSession {
 /** Media Studio's API, when that extension is installed. */
 const mediaStudio = () => (typeof globalThis.MediaStudio?.generateLast === 'function' ? globalThis.MediaStudio : null);
 
+const answered = (choice) => (choice?.person ? { person: choice.person } : {});
+
 /**
  * Who picks up, from the card's "Who answers calls" setting: { person } for someone in the
- * story, {} for the card itself, or null when the user cancelled the choice.
+ * story, {} for the card itself, or null when the user cancelled the choice. The card's own
+ * character heads the list, so a story card never hides the character it is named after.
  */
 async function pickCallee(cfg, cardName) {
-    const pick = whoAnswers(cfg);
+    const pick = whoAnswers(cfg, cardName);
     if (!pick.ask) return pick;
-    const cast = castOf(cfg);
+    const choices = calleeChoices(cfg, cardName);
     const c = ctx();
     const esc = (t) => $('<span>').text(t).html();
+    const label = (ch) => (ch.card ? `${ch.name} (the card itself)` : ch.name);
     const $el = $(`<div class="tv-char-popup"><h3><i class="fa-solid fa-phone"></i> Call someone in ${esc(cardName)}</h3>
-        <select class="text_pole">${cast.map((p, i) => `<option value="${i}">${esc(p.name)}</option>`).join('')}</select></div>`);
-    const last = cast.findIndex(p => p.name === c.chatMetadata?.tavern_voice_callee);
-    if (last >= 0) $el.find('select').val(String(last));
+        <select class="text_pole">${choices.map((ch, i) => `<option value="${i}">${esc(label(ch))}</option>`).join('')}</select></div>`);
+    const remembered = String(c.chatMetadata?.tavern_voice_callee ?? '');
+    const last = choices.findIndex(ch => (ch.card ? '' : ch.name) === remembered);
+    if (last > 0) $el.find('select').val(String(last));
     const ok = await c.callGenericPopup($el, c.POPUP_TYPE.CONFIRM, '', { okButton: 'Call', cancelButton: 'Cancel' });
     if (ok !== c.POPUP_RESULT.AFFIRMATIVE) return null;
-    const person = cast[Number($el.find('select').val())] ?? cast[0];
-    c.chatMetadata.tavern_voice_callee = person.name;
+    const choice = choices[Number($el.find('select').val())] ?? choices[0];
+    c.chatMetadata.tavern_voice_callee = choice.card ? '' : choice.name;
     c.saveMetadataDebounced?.();
-    return { person };
+    return answered(choice);
 }
 
 const INSECURE_PAGE_MESSAGE = 'Your browser blocks the microphone because this page is not HTTPS. Open SillyTavern through an https:// address (reverse proxy, Tailscale or Cloudflare Tunnel) or via localhost.';
@@ -1034,7 +1042,7 @@ async function refreshCallButton() {
     const single = !c.groupId && c.characterId !== undefined && c.characterId !== null;
     const cfg = single ? await getCharVoice(c.characterId) : null;
     if (seq !== refreshSeq) return;
-    const who = cfg?.enabled ? whoAnswers(cfg) : {};
+    const who = cfg?.enabled ? whoAnswers(cfg, c.characters[c.characterId]?.name) : {};
     const name = who.person?.name || (who.ask ? `someone in ${c.characters[c.characterId]?.name}` : c.characters[c.characterId]?.name);
     btn.toggleClass('displayNone', !cfg?.enabled).attr('title', cfg?.enabled ? `Voice call ${name}` : '');
 }
@@ -1149,8 +1157,10 @@ function bindCastEditor($el, chid, ch, cfg) {
     const save = (patch = {}) => setCharVoice(chid, { cast, callees: '', ...patch });
 
     function renderAnswers() {
-        const options = [[ASK, cast.length > 1 ? 'Ask me each time I call' : (cast[0]?.name || 'Ask me')], ['', `${ch.name} (the card itself)`],
-            ...(cast.length > 1 ? cast.map(p => [p.name, p.name]) : [])];
+        // Everyone is listed whatever the size of the cast: with one side character this used to
+        // relabel "Ask me each time" as that person and leave them no way to be pinned instead.
+        const options = [[ASK, 'Ask me each time I call'], ['', `${ch.name} (the card itself)`],
+            ...cast.filter(p => p.name.toLowerCase() !== ch.name.toLowerCase()).map(p => [p.name, p.name])];
         const current = String(cfg.answers ?? ASK);
         const known = options.some(([v]) => v.toLowerCase() === current.toLowerCase());
         $el.find('[name=answers]').html(options.map(([v, label]) => `<option value="${esc(v)}">${esc(label)}</option>`).join(''))

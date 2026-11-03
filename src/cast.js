@@ -28,16 +28,36 @@ export function castOf(cfg) {
 }
 
 /**
- * Who picks up: { ask: true } to choose at call time, { person } for someone on the list,
- * or {} for the card itself.
+ * Everyone who could pick up, in the order the call popup offers them: the card's own character
+ * first, then the rest of the story. The card is always a choice. A cast entry carrying the
+ * card's own name is that same character, so it lends the card's choice its voice and brief
+ * rather than appearing a second time.
  */
-export function whoAnswers(cfg) {
+export function calleeChoices(cfg, cardName = '') {
     const cast = castOf(cfg);
+    const self = String(cardName ?? '').trim();
+    const own = cast.find(p => p.name.toLowerCase() === self.toLowerCase()) || null;
+    return [{ name: self, person: own, card: true },
+        ...cast.filter(p => p !== own).map(p => ({ name: p.name, person: p, card: false }))];
+}
+
+const answered = (choice) => (choice?.person ? { person: choice.person } : {});
+
+/**
+ * Who picks up: { ask: true } to choose at call time, { person } for someone on the list,
+ * or {} for the card itself. One side character is still a question, because the card's own
+ * character is the other answer: it used to pick up every call on a card whose own character
+ * could then never be reached.
+ */
+export function whoAnswers(cfg, cardName = '') {
+    const choices = calleeChoices(cfg, cardName);
     const setting = String(cfg?.answers ?? ASK);
-    if (!cast.length || setting === '') return {};
-    if (setting === ASK) return cast.length === 1 ? { person: cast[0] } : { ask: true };
-    const person = cast.find(p => p.name.toLowerCase() === setting.toLowerCase());
-    return person ? { person } : cast.length === 1 ? { person: cast[0] } : { ask: true };
+    if (setting === '') return answered(choices[0]);
+    if (setting !== ASK) {
+        const named = choices.find(ch => !ch.card && ch.name.toLowerCase() === setting.toLowerCase());
+        if (named) return answered(named);
+    }
+    return choices.length > 1 ? { ask: true } : answered(choices[0]);
 }
 
 /** The card's voice settings with one person's own voice and notes on top. */
