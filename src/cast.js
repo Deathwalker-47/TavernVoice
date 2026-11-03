@@ -84,3 +84,29 @@ export function mergeCast(current, found) {
     }
     return out;
 }
+
+/** Enough of a brief to say who someone is; a whole card description would crowd the prompt. */
+const brief = (text) => String(text ?? '').trim().slice(0, 600);
+
+/**
+ * Who the call can come from: the user's persona first, then this card's people, then every
+ * other character. Whoever is picking up is left out, because nobody calls themselves.
+ */
+export function callerChoices({ persona, cardName, cast = [], characters = [], answering = '' }) {
+    const me = String(persona ?? '').trim();
+    const busy = String(answering ?? '').trim().toLowerCase();
+    // The persona is always the first offer, so it is the one name the answering check spares.
+    const seen = new Set([me.toLowerCase()]);
+    const out = [{ name: me, about: '', group: '', persona: true }];
+    const add = (name, about, group) => {
+        const who = String(name ?? '').trim();
+        const key = who.toLowerCase();
+        if (!who || seen.has(key) || key === busy) return;
+        seen.add(key);
+        out.push({ name: who, about: brief(about), group, persona: false });
+    };
+    add(cardName, '', 'In this story');
+    for (const p of cast ?? []) add(p?.name, p?.about, 'In this story');
+    for (const ch of characters ?? []) add(ch?.name, ch?.description, 'Other characters');
+    return out;
+}

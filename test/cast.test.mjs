@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ASK, calleeChoices, castOf, mergeCast, voiceFor, whoAnswers } from '../src/cast.js';
+import { ASK, calleeChoices, callerChoices, castOf, mergeCast, voiceFor, whoAnswers } from '../src/cast.js';
 import { DEFAULT_CALL_PROMPT, buildCallPrompt } from '../src/prompt.js';
 
 const NADIA = { name: 'Nadia', voice: 'ara', about: 'Runs the inn.', notes: 'warm' };
@@ -74,4 +74,59 @@ test('the call prompt says who answered and who is not on the call', () => {
     assert.ok(out.indexOf('Not on this call') < out.indexOf('The call just connected'), 'the greeting note stays last');
     const plain = buildCallPrompt({ template: DEFAULT_CALL_PROMPT, tagLevel: 'none' });
     assert.doesNotMatch(plain, /Who \{\{char\}\} is|Not on this call/);
+});
+
+test('you can call as the persona, as someone in the story, or as anyone else', () => {
+    const choices = callerChoices({
+        persona: ' Anuj ',
+        cardName: 'Seaside Inn',
+        cast: [NADIA, BRAM],
+        characters: [{ name: 'Bram', description: 'A second Bram.' }, { name: 'Ilse', description: 'A guest.' }],
+    });
+    assert.deepEqual(choices.map(c => c.name), ['Anuj', 'Seaside Inn', 'Nadia', 'Bram', 'Ilse'],
+        'the persona, then the card and its people, then the rest');
+    assert.deepEqual(choices[0], { name: 'Anuj', about: '', group: '', persona: true });
+    assert.deepEqual(choices[1], { name: 'Seaside Inn', about: '', group: 'In this story', persona: false });
+    assert.deepEqual(choices[2], { name: 'Nadia', about: 'Runs the inn.', group: 'In this story', persona: false });
+    assert.deepEqual(choices[4], { name: 'Ilse', about: 'A guest.', group: 'Other characters', persona: false });
+    assert.equal(choices[3].about, 'The cook.', 'the story\'s own Bram is the one offered');
+});
+
+test('nobody calls themselves', () => {
+    const choices = callerChoices({ persona: 'Anuj', cardName: 'Nadia', cast: [NADIA, BRAM], answering: ' nadia ' });
+    assert.deepEqual(choices.map(c => c.name), ['Anuj', 'Bram'], 'whoever picked up cannot also be calling');
+    const same = callerChoices({ persona: 'nadia', cast: [NADIA], answering: 'Bram' });
+    assert.deepEqual(same.map(c => c.name), ['nadia'], 'a character sharing the persona\'s name is the persona');
+    const herself = callerChoices({ persona: 'Nadia', cast: [NADIA], answering: 'Nadia' });
+    assert.deepEqual(herself.map(c => c.name), ['Nadia'], 'the persona heads the list even when she is the one picking up');
+});
+
+test('the caller list drops names it cannot offer', () => {
+    const choices = callerChoices({ persona: '', cardName: '   ', cast: [{ name: '' }, { name: ' Bram ' }] });
+    assert.deepEqual(choices[0], { name: '', about: '', group: '', persona: true }, 'an unnamed persona is still first');
+    assert.deepEqual(choices.map(c => c.name), ['', 'Bram'], 'blank names go, and the rest keep their own spelling');
+    const long = callerChoices({ persona: 'Anuj', characters: [{ name: 'Ilse', description: ` ${'x'.repeat(900)} ` }] });
+    assert.equal(long[1].about.length, 600, 'a whole card description would crowd the prompt');
+});
+
+test('calling as someone else makes them {{user}} for the call', () => {
+    const out = buildCallPrompt({
+        template: DEFAULT_CALL_PROMPT, tagLevel: 'none', callee: 'Nimya', about: 'Runs the inn.',
+        caller: 'Mahira', callerAbout: 'Her sister.', others: ['Nimya', 'Mahira', 'Bram'],
+    });
+    assert.match(out, /Who Mahira is: Her sister\./);
+    assert.match(out, /the caller is Mahira\./, 'the chat still describes the persona, who is not on this call');
+    assert.match(out, /Not on this call: Bram\./, 'Mahira is on the call, so she is not one of the others');
+    assert.doesNotMatch(out, /\{\{user\}\}/, 'nothing is left for SillyTavern to fill in with the persona');
+    assert.ok(out.indexOf('Not on this call') < out.indexOf('Who Mahira is'), 'the caller is introduced after the others');
+});
+
+test('a caller with no brief of their own is still placed in the story', () => {
+    const out = buildCallPrompt({ template: DEFAULT_CALL_PROMPT, tagLevel: 'none', callee: 'Nimya', caller: ' Mahira ' });
+    assert.match(out, /Who Mahira is: Mahira, from this story\./);
+    const cash = buildCallPrompt({ template: '{{user}} calls.', tagLevel: 'none', caller: 'A$AP' });
+    assert.match(cash, /^A\$AP calls\./, 'a dollar sign in a name is not a replacement pattern');
+    const plain = buildCallPrompt({ template: DEFAULT_CALL_PROMPT, tagLevel: 'none', callee: 'Nimya' });
+    assert.match(plain, /\{\{user\}\}/, 'an ordinary call is from the persona, so SillyTavern fills it in');
+    assert.doesNotMatch(plain, /Who \{\{user\}\} is/);
 });

@@ -15,7 +15,7 @@ import { encodeWav } from './src/dsp.js';
 import { SpeechTurn, captionHtml, decorateTagsHtml, isSpeakable, toSpeechText } from './src/text.js';
 import { DEFAULT_CALL_PROMPT, PREVIOUS_CALL_PROMPTS, buildCallPrompt } from './src/prompt.js';
 import { CallUI } from './src/ui.js';
-import { ASK, calleeChoices, castOf, mergeCast, voiceFor, whoAnswers } from './src/cast.js';
+import { ASK, calleeChoices, callerChoices, castOf, mergeCast, voiceFor, whoAnswers } from './src/cast.js';
 
 const ctx = () => SillyTavern.getContext();
 const TAG = '[TavernVoice]';
@@ -317,13 +317,14 @@ const words = (s) => String(s).toLowerCase().replace(/<[^>]+>|\[[^\]]+\]/g, ' ')
 let call = null;
 
 class CallSession {
-    constructor(chid, charCfg, person = null) {
+    constructor(chid, charCfg, person = null, caller = null) {
         const c = ctx();
         this.s = settings();
         this.chid = chid;
         this.chatId = c.getCurrentChatId();
         this.char = c.characters[chid];
         this.person = person;               // someone on a story card, or null for the card itself
+        this.caller = caller;               // who is ringing them, or null when it's your persona
         this.callee = person?.name || '';
         this.name = this.callee || this.char.name;
         this.cast = castOf(charCfg).map(p => p.name);
@@ -421,7 +422,9 @@ class CallSession {
         if (s.sttMode !== 'batch') this.connectStream();
 
         this.applyPrompt(s.greet);
-        if (s.logCalls) await logMarker(`📞 {{user}} started a voice call with ${this.name}.`);
+        if (s.logCalls) await logMarker(this.caller
+            ? `📞 ${this.caller.name} called ${this.name}.`
+            : `📞 {{user}} started a voice call with ${this.name}.`);
         this.#acquireWakeLock();
         this.#loop();
 
@@ -507,6 +510,7 @@ class CallSession {
         const text = buildCallPrompt({
             template: s.promptTemplate, tagLevel: promptTags, voiceNotes: this.voice.notes, greeting,
             callee: this.callee, about: this.person?.about || '', language: this.voice.language,
+            caller: this.caller?.name || '', callerAbout: this.caller?.about || '',
             // Named even when the card itself answered: without this the model drifts into
             // speaking as the side characters it can see in the chat.
             others: this.cast.filter(n => n.toLowerCase() !== this.name.toLowerCase()),
@@ -654,7 +658,7 @@ class CallSession {
     }
 
     keyterms() {
-        return [...new Set([this.name, this.char.name, ctx().name1, ...this.cast])].filter(Boolean);
+        return [...new Set([this.name, this.char.name, ctx().name1, this.caller?.name, ...this.cast])].filter(Boolean);
     }
 
     onMicFrame({ pcm, level }) {
@@ -886,29 +890,68 @@ const mediaStudio = () => (typeof globalThis.MediaStudio?.generateLast === 'func
 
 const answered = (choice) => (choice?.person ? { person: choice.person } : {});
 
+/** Groups the "Calling as" list under its headings, keeping the order it came in. */
+function callerOptionsHtml(people, esc) {
+    const groups = [];
+    for (const [i, p] of people.entries()) {
+        const option = `<option value="${i}">${esc(p.persona ? `You (${p.name})` : p.name)}</option>`;
+        const open = groups[groups.length - 1];
+        if (open && open.name === p.group) open.html += option;
+        else groups.push({ name: p.group, html: option });
+    }
+    return groups.map(g => (g.name ? `<optgroup label="${esc(g.name)}">${g.html}</optgroup>` : g.html)).join('');
+}
+
 /**
- * Who picks up, from the card's "Who answers calls" setting: { person } for someone in the
- * story, {} for the card itself, or null when the user cancelled the choice. The card's own
- * character heads the list, so a story card never hides the character it is named after.
+ * Who picks up and who is ringing them: { person } for someone in the story or {} for the card
+ * itself, plus { caller } when the call comes from someone other than your persona, and null
+ * when the user cancelled. The card's own character heads the list of answerers, so a story card
+ * never hides the character it is named after.
+ *
+ * The popup opens on every call now: the caller is a choice even on a card with nobody else on
+ * it, and both dropdowns come back on the last pair this chat used.
  */
-async function pickCallee(cfg, cardName) {
-    const pick = whoAnswers(cfg, cardName);
-    if (!pick.ask) return pick;
-    const choices = calleeChoices(cfg, cardName);
+async function pickCall(cfg, cardName) {
     const c = ctx();
     const esc = (t) => $('<span>').text(t).html();
+    const fixed = whoAnswers(cfg, cardName);
+    const answers = fixed.ask ? calleeChoices(cfg, cardName) : [];
+    const cast = castOf(cfg);
+    const characters = (c.characters || []).map(ch => ({ name: ch.name, description: ch.description }));
     const label = (ch) => (ch.card ? `${ch.name} (the card itself)` : ch.name);
-    const $el = $(`<div class="tv-char-popup"><h3><i class="fa-solid fa-phone"></i> Call someone in ${esc(cardName)}</h3>
-        <select class="text_pole">${choices.map((ch, i) => `<option value="${i}">${esc(label(ch))}</option>`).join('')}</select></div>`);
-    const remembered = String(c.chatMetadata?.tavern_voice_callee ?? '');
-    const last = choices.findIndex(ch => (ch.card ? '' : ch.name) === remembered);
-    if (last > 0) $el.find('select').val(String(last));
+
+    const $el = $(`<div class="tv-char-popup"><h3><i class="fa-solid fa-phone"></i> Call ${esc(cardName)}</h3>
+        <label class="tv-notes${answers.length ? '' : ' displayNone'}">Who are you calling
+            <select class="tv-callee text_pole">${answers.map((ch, i) => `<option value="${i}">${esc(label(ch))}</option>`).join('')}</select></label>
+        <label class="tv-notes">Calling as <select class="tv-caller text_pole"></select></label></div>`);
+    const $callee = $el.find('.tv-callee');
+    const $caller = $el.find('.tv-caller');
+
+    const lastCallee = String(c.chatMetadata?.tavern_voice_callee ?? '');
+    const at = answers.findIndex(ch => (ch.card ? '' : ch.name) === lastCallee);
+    if (at > 0) $callee.val(String(at));
+
+    // Rebuilt whenever the answerer changes, so nobody is ever offered as their own caller.
+    let callers = [];
+    const drawCallers = () => {
+        const picked = answers.length ? answers[Number($callee.val())] : null;
+        const answering = picked ? (picked.card ? cardName : picked.name) : (fixed.person?.name || cardName);
+        callers = callerChoices({ persona: c.name1, cardName, cast, characters, answering });
+        const want = String(c.chatMetadata?.tavern_voice_caller ?? '');
+        const keep = callers.findIndex(p => !p.persona && p.name === want);
+        $caller.html(callerOptionsHtml(callers, esc)).val(String(keep > 0 ? keep : 0));
+    };
+    drawCallers();
+    $callee.on('change', drawCallers);
+
     const ok = await c.callGenericPopup($el, c.POPUP_TYPE.CONFIRM, '', { okButton: 'Call', cancelButton: 'Cancel' });
     if (ok !== c.POPUP_RESULT.AFFIRMATIVE) return null;
-    const choice = choices[Number($el.find('select').val())] ?? choices[0];
-    c.chatMetadata.tavern_voice_callee = choice.card ? '' : choice.name;
+    const choice = answers.length ? (answers[Number($callee.val())] ?? answers[0]) : null;
+    const caller = callers[Number($caller.val())] ?? callers[0];
+    if (choice) c.chatMetadata.tavern_voice_callee = choice.card ? '' : choice.name;
+    c.chatMetadata.tavern_voice_caller = caller.persona ? '' : caller.name;
     c.saveMetadataDebounced?.();
-    return answered(choice);
+    return { ...(choice ? answered(choice) : fixed), caller: caller.persona ? null : caller };
 }
 
 const INSECURE_PAGE_MESSAGE = 'Your browser blocks the microphone because this page is not HTTPS. Open SillyTavern through an https:// address (reverse proxy, Tailscale or Cloudflare Tunnel) or via localhost.';
@@ -942,14 +985,14 @@ async function startCall() {
         toastr.warning('SillyTavern is not connected to an LLM API, so the character can\'t answer.', 'TavernVoice');
         return;
     }
-    const picked = await pickCallee(cfg, name);
+    const picked = await pickCall(cfg, name);
     if (!picked) return;
     const { provider } = parseVoice(resolveVoice(voiceFor(cfg, picked.person ?? null)).voice);
     if (!(await hasKey(provider))) {
         toastr.warning(`${picked.person?.name || name} has a ${PROVIDERS[provider]} voice. Add your ${PROVIDERS[provider]} API key in Extensions → TavernVoice first.`, 'TavernVoice');
         return;
     }
-    call = new CallSession(c.characterId, cfg, picked.person ?? null);
+    call = new CallSession(c.characterId, cfg, picked.person ?? null, picked.caller ?? null);
     refreshCallButton();
     try {
         await call.start();

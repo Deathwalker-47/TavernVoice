@@ -53,6 +53,13 @@ Audio never passes through your server. The browser talks to `api.x.ai` directly
 
 ## Using a call
 
+Tapping the phone button asks two things before it dials:
+
+- **Who are you calling** — the card's own character, or anyone in *People in this story*. Shown only when the card has people on it and *Who answers calls* is left on "Ask me each time".
+- **Calling as** — your persona by default, or anyone else: someone from this story, or any other character you have. The one picking up is left out, and the character is told who is really on the line instead of your persona.
+
+Both come back on whatever you chose last in that chat.
+
 | Control | What it does |
 |---|---|
 | 🎤 | Mute or unmute. In push-to-talk mode, **hold** it to talk |

@@ -66,6 +66,8 @@ export function parseCallees(text) {
  * @param {string} [o.callee] Who picked up, when it isn't the card itself
  * @param {string} [o.about] Who the callee is, so a story card's narrator can play just them
  * @param {string[]} [o.others] The story's other people, who are not on the call
+ * @param {string} [o.caller] Who is calling, when it isn't the user's persona
+ * @param {string} [o.callerAbout] Who the caller is, since the chat still describes the persona
  */
 /** "ml" -> "Malayalam", "pt-BR" -> "Brazilian Portuguese". */
 function languageName(code) {
@@ -84,17 +86,25 @@ function languageNote(language) {
     return `\n{{char}} speaks ${name} on this call: every spoken line is in ${name}, written the way ${name} is normally written, because the voice reads it aloud. Names stay as they are.`;
 }
 
-export function buildCallPrompt({ template, tagLevel, voiceNotes = '', greeting = false, callee = '', about = '', others = [], language = '' }) {
+export function buildCallPrompt({ template, tagLevel, voiceNotes = '', greeting = false, callee = '', about = '', others = [], language = '', caller = '', callerAbout = '' }) {
     const notes = voiceNotes.trim() ? `\n- How {{char}} sounds on the phone: ${voiceNotes.trim()}` : '';
     let out = (template || DEFAULT_CALL_PROMPT)
         .replace(/\{\{voice_tags\}\}/gi, voiceTagsGuide(tagLevel))
         .replace(/\{\{voice_notes\}\}/gi, notes);
     if (about.trim()) out += `\n\nWho {{char}} is: ${about.trim()}`;
-    const rest = others.map(n => String(n).trim()).filter(n => n && n.toLowerCase() !== callee.trim().toLowerCase());
+    // Calling Nimya as Mahira puts them both on the phone, so neither is one of the others.
+    const onCall = [callee, caller].map(n => String(n).trim().toLowerCase()).filter(Boolean);
+    const rest = others.map(n => String(n).trim()).filter(n => n && !onCall.includes(n.toLowerCase()));
     if (rest.length) out += `\nNot on this call: ${rest.join(', ')}. {{char}} can talk about them, but never speaks their lines or answers for them.`;
+    const from = caller.trim();
+    if (from) {
+        out += `\n\nWho {{user}} is: ${callerAbout.trim() || `${from}, from this story.`}`;
+        out += '\nThe persona described elsewhere in this chat is not on this call: the caller is {{user}}.';
+    }
     out += languageNote(language);
     if (greeting) out += GREETING_NOTE;
     const name = callee.trim();
     if (name) out = out.replace(/\{\{char\}\}/gi, name.replace(/\$/g, '$$$$'));
+    if (from) out = out.replace(/\{\{user\}\}/gi, from.replace(/\$/g, '$$$$'));
     return out;
 }
