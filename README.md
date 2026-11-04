@@ -98,6 +98,8 @@ Tips:
 
 Pick an ElevenLabs, HeyGen or Cartesia voice and set the character's **Language** to the language it should speak (Malayalam, Tamil, Telugu, Kannada, Marathi, Gujarati, Punjabi and Urdu are listed under *ElevenLabs, HeyGen and Cartesia voices only*). Write the card so the character replies in that language. Grok STT doesn't list Malayalam, so for those languages it auto-detects what you say instead of being told the language.
 
+**Language** says what the character usually speaks, not what every line is. Each line is checked before it is spoken: one written in its own script is taken at its word, so a Malayalam sentence is read as Malayalam even on a card set to English. Romanised speech ("Ponnuye school-il nee vidikkuka") keeps the character's language, since it is not English however it is spelled — but a line that really is English ("Okay, see you at six") is spoken as English rather than being read with Malayalam pronunciation. The setting is only ever corrected by the line in front of it, never replaced by a guess.
+
 ### Speech tags (from the xAI docs)
 
 The AI always writes Grok's tags. For ElevenLabs v3/v4 voices they are rewritten as ElevenLabs audio tags (`[laugh]` → `[laughs]`, `<whisper>secret</whisper>` → `[whispers] secret`, `<emphasis>` → capitals). Voices that can't do tags get none: the call prompt tells the AI to write plain speech, and pauses become "…".

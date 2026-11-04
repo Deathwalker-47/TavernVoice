@@ -13,6 +13,7 @@ import { PROVIDERS, VoiceRouter, parseVoice } from './src/voices.js';
 import { getAudioContext, MicInput, SpeechPlayer, Sounds } from './src/audio.js';
 import { encodeWav } from './src/dsp.js';
 import { SpeechTurn, captionHtml, decorateTagsHtml, isSpeakable, toSpeechText } from './src/text.js';
+import { spokenLanguage } from './src/language.js';
 import { DEFAULT_CALL_PROMPT, HUNG_UP_NOTE, PREVIOUS_CALL_PROMPTS, buildCallPrompt } from './src/prompt.js';
 import { CallUI } from './src/ui.js';
 import { ASK, calleeChoices, callerChoices, castOf, mergeCast, voiceFor, whoAnswers } from './src/cast.js';
@@ -648,7 +649,8 @@ class CallSession {
                     ? await helperTag(text, { char: this.name, context: lastUserLine(), timeoutMs: budget, until: first ? null : needed })
                     : text;
                 meta.text = spoken; // the caption shows what the voice actually gets
-                return router.tts({ text: spoken, voice, language, speed, signal });
+                // The setting says what they usually speak; the line says what they just said.
+                return router.tts({ text: spoken, voice, language: spokenLanguage(spoken, language), speed, signal });
             }, meta);
         }
     }
@@ -1073,7 +1075,7 @@ async function speakOnce(rawText, chid, person = null) {
     for (const chunk of chunks) {
         oneShot.enqueue(async (signal) => {
             const text = s.helperTags && !plain ? await helperTag(chunk, { char: name, timeoutMs: 8000 }) : chunk;
-            return router.tts({ text, voice: cfg.voice, language: cfg.language, speed: cfg.speed, signal });
+            return router.tts({ text, voice: cfg.voice, language: spokenLanguage(text, cfg.language), speed: cfg.speed, signal });
         }, { text: chunk });
     }
 }
